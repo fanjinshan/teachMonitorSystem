@@ -253,6 +253,7 @@ Makefile: ../../fileTransfer_server.pro ../../../../5.15.2/mingw81_64/mkspecs/fe
 		../../../../5.15.2/mingw81_64/mkspecs/features/resources.prf \
 		../../../../5.15.2/mingw81_64/mkspecs/features/moc.prf \
 		../../../../5.15.2/mingw81_64/mkspecs/features/win32/opengl.prf \
+		../../../../5.15.2/mingw81_64/mkspecs/features/uic.prf \
 		../../../../5.15.2/mingw81_64/mkspecs/features/qmake_use.prf \
 		../../../../5.15.2/mingw81_64/mkspecs/features/file_copies.prf \
 		../../../../5.15.2/mingw81_64/mkspecs/features/win32/windows.prf \
@@ -261,8 +262,10 @@ Makefile: ../../fileTransfer_server.pro ../../../../5.15.2/mingw81_64/mkspecs/fe
 		../../../../5.15.2/mingw81_64/mkspecs/features/yacc.prf \
 		../../../../5.15.2/mingw81_64/mkspecs/features/lex.prf \
 		../../fileTransfer_server.pro \
+		../../../../5.15.2/mingw81_64/lib/Qt5Widgets.prl \
 		../../../../5.15.2/mingw81_64/lib/Qt5Gui.prl \
 		../../../../5.15.2/mingw81_64/lib/Qt5Network.prl \
+		../../../../5.15.2/mingw81_64/lib/Qt5Sql.prl \
 		../../../../5.15.2/mingw81_64/lib/Qt5Core.prl \
 		../../../../5.15.2/mingw81_64/lib/qtmain.prl \
 		../../../../5.15.2/mingw81_64/mkspecs/features/build_pass.prf
@@ -450,6 +453,7 @@ Makefile: ../../fileTransfer_server.pro ../../../../5.15.2/mingw81_64/mkspecs/fe
 ../../../../5.15.2/mingw81_64/mkspecs/features/resources.prf:
 ../../../../5.15.2/mingw81_64/mkspecs/features/moc.prf:
 ../../../../5.15.2/mingw81_64/mkspecs/features/win32/opengl.prf:
+../../../../5.15.2/mingw81_64/mkspecs/features/uic.prf:
 ../../../../5.15.2/mingw81_64/mkspecs/features/qmake_use.prf:
 ../../../../5.15.2/mingw81_64/mkspecs/features/file_copies.prf:
 ../../../../5.15.2/mingw81_64/mkspecs/features/win32/windows.prf:
@@ -458,8 +462,10 @@ Makefile: ../../fileTransfer_server.pro ../../../../5.15.2/mingw81_64/mkspecs/fe
 ../../../../5.15.2/mingw81_64/mkspecs/features/yacc.prf:
 ../../../../5.15.2/mingw81_64/mkspecs/features/lex.prf:
 ../../fileTransfer_server.pro:
+../../../../5.15.2/mingw81_64/lib/Qt5Widgets.prl:
 ../../../../5.15.2/mingw81_64/lib/Qt5Gui.prl:
 ../../../../5.15.2/mingw81_64/lib/Qt5Network.prl:
+../../../../5.15.2/mingw81_64/lib/Qt5Sql.prl:
 ../../../../5.15.2/mingw81_64/lib/Qt5Core.prl:
 ../../../../5.15.2/mingw81_64/lib/qtmain.prl:
 ../../../../5.15.2/mingw81_64/mkspecs/features/build_pass.prf:

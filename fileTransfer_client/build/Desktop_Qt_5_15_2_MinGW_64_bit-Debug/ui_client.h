@@ -13,7 +13,6 @@
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QHeaderView>
-#include <QtWidgets/QLineEdit>
 #include <QtWidgets/QMainWindow>
 #include <QtWidgets/QMenuBar>
 #include <QtWidgets/QPushButton>
@@ -31,9 +30,6 @@ public:
     QWidget *centralwidget;
     QVBoxLayout *verticalLayout;
     QHBoxLayout *horizontalLayout;
-    QLineEdit *account;
-    QLineEdit *passwordEdit;
-    QPushButton *loginBt;
     QTreeWidget *fileList;
     QHBoxLayout *horizontalLayout_2;
     QPushButton *settingBt;
@@ -57,21 +53,6 @@ public:
         verticalLayout->setObjectName(QString::fromUtf8("verticalLayout"));
         horizontalLayout = new QHBoxLayout();
         horizontalLayout->setObjectName(QString::fromUtf8("horizontalLayout"));
-        account = new QLineEdit(centralwidget);
-        account->setObjectName(QString::fromUtf8("account"));
-
-        horizontalLayout->addWidget(account);
-
-        passwordEdit = new QLineEdit(centralwidget);
-        passwordEdit->setObjectName(QString::fromUtf8("passwordEdit"));
-
-        horizontalLayout->addWidget(passwordEdit);
-
-        loginBt = new QPushButton(centralwidget);
-        loginBt->setObjectName(QString::fromUtf8("loginBt"));
-
-        horizontalLayout->addWidget(loginBt);
-
 
         verticalLayout->addLayout(horizontalLayout);
 
@@ -137,9 +118,6 @@ public:
     void retranslateUi(QMainWindow *client)
     {
         client->setWindowTitle(QCoreApplication::translate("client", "client", nullptr));
-        account->setPlaceholderText(QCoreApplication::translate("client", "\350\264\246\345\217\267", nullptr));
-        passwordEdit->setPlaceholderText(QCoreApplication::translate("client", "\345\257\206\347\240\201", nullptr));
-        loginBt->setText(QCoreApplication::translate("client", "\347\231\273\345\275\225", nullptr));
         settingBt->setText(QCoreApplication::translate("client", "\350\256\276\347\275\256", nullptr));
         downLoadBt->setText(QCoreApplication::translate("client", "\344\270\213\350\275\275", nullptr));
         refreshBt->setText(QCoreApplication::translate("client", "\345\210\267\346\226\260", nullptr));
