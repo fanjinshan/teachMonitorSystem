@@ -46,6 +46,8 @@ public:
 
     // 【新增】班级管理
     bool createClass(const QString &className);
+    // 【新增】删除班级
+    bool deleteClass(const QString &className);
     QList<ClassInfo> getAllClasses();
     // 获取班级成员 (onlineOnly=false 获取所有)
     QList<StudentInfo> getClassMembers(const QString &className, bool onlineOnly = false);

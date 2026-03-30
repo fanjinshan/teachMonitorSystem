@@ -75,6 +75,7 @@ private slots:
 
     // 【新增】班级管理相关槽函数
     void onCreateClassClicked();
+    void onDeleteClassClicked(); // 【新增】删除班级槽函数
     void onViewClassMembersClicked();
     void onClassComboBoxChanged(const QString &className);
 
@@ -121,6 +122,9 @@ private:
     // 【新增】设置页班级创建组件
     QLineEdit *m_newClassNameEdit;
     QPushButton *btnCreateClass;
+    // 【新增】设置页班级删除组件
+    QComboBox *m_deleteClassCombo;
+    QPushButton *btnDeleteClass;
 
     // 新增：网络组件
     QUdpSocket *m_udpSocket;
@@ -142,6 +146,9 @@ private:
     
     // 【新增】存储正在等待实时截图的加载对话框，以便收到数据后关闭
     QMap<QString, QDialog*> m_loadingDialogs;
+
+    // 【新增】当前筛选的班级名称，用于控制 updateStudentTableRow 的显示逻辑
+    QString m_currentFilterClass;
 };
 
 #endif // SERVERWINDOW_H

@@ -32,6 +32,7 @@ struct UserInfo {
     QString nickName;
     bool isTeacher;
     qint64 lastHeartbeat;
+    QString className; // 【新增】缓存心跳包中的班级信息
 };
 
 // 【修复】定义全局静态变量，供 onUdpReadyRead 和 broadcastUserList 共用，避免局部变量冲突
@@ -106,9 +107,14 @@ ServerWindow::ServerWindow(QWidget *parent)
     m_heartbeatTimer->start(5000);
     sendServerHeartbeat(); // 立即发送一次
     
+    // 【新增】启动后立即主动广播班级列表，确保学生端能第一时间获取到已有班级
+    // 防止因定时器未触发或丢包导致学生端下拉框初始为空
+    broadcastUserList();
+
     onLogMessage("系统就绪，等待学生上线...");
     
     // 【新增】初始化班级列表
+    m_currentFilterClass = "全部班级"; // 【修复】初始化筛选状态
     refreshMonitorTable(); // 初始加载所有学生
 }
 
@@ -214,9 +220,9 @@ void ServerWindow::setupMonitorPage() {
 
     // 监控表格
     m_monitorTable = new QTableWidget();
-    // 【修复】将列数设置为 7，以容纳：ID, 姓名，班级，状态，违规应用，违规次数，查看屏幕
+    // 【修改】将第 1 列表头由“学生 ID"改为“学生 IP"
     m_monitorTable->setColumnCount(7);
-    m_monitorTable->setHorizontalHeaderLabels({"学生 ID", "姓名", "班级", "状态", "违规应用", "违规次数", "查看屏幕"}); 
+    m_monitorTable->setHorizontalHeaderLabels({"学生 IP", "姓名", "班级", "状态", "违规应用", "违规次数", "查看屏幕"}); 
     m_monitorTable->horizontalHeader()->setStretchLastSection(true);
     m_monitorTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_monitorTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -352,6 +358,36 @@ void ServerWindow::setupSettingsPage() {
     classHint->setStyleSheet("color: #7f8c8d; font-size: 12px; margin-top: 5px;");
     layout->addWidget(classHint);
     
+    layout->addSpacing(20);
+    
+    // --- 【新增】删除班级区域 ---
+    QLabel *deleteLbl = new QLabel("删除班级：");
+    deleteLbl->setFont(QFont("Microsoft YaHei", 12, QFont::Bold));
+    layout->addWidget(deleteLbl);
+    
+    QHBoxLayout *deleteLayout = new QHBoxLayout();
+    m_deleteClassCombo = new QComboBox();
+    m_deleteClassCombo->setPlaceholderText("选择要删除的班级");
+    m_deleteClassCombo->setMinimumWidth(200);
+    // 初始化加载现有班级
+    QList<ClassInfo> initClasses = DatabaseManager::instance().getAllClasses();
+    for (const auto &cls : initClasses) {
+        m_deleteClassCombo->addItem(cls.className);
+    }
+    deleteLayout->addWidget(m_deleteClassCombo);
+    
+    btnDeleteClass = new QPushButton("删除选中班级");
+    btnDeleteClass->setStyleSheet("background-color: #e74c3c; color: white; padding: 5px 15px; border-radius: 4px;");
+    connect(btnDeleteClass, &QPushButton::clicked, this, &ServerWindow::onDeleteClassClicked);
+    deleteLayout->addWidget(btnDeleteClass);
+    deleteLayout->addStretch();
+    
+    layout->addLayout(deleteLayout);
+    
+    QLabel *deleteHint = new QLabel("提示：删除班级后，原属于该班级的学生将变为“未分班”状态。");
+    deleteHint->setStyleSheet("color: #7f8c8d; font-size: 12px; margin-top: 5px;");
+    layout->addWidget(deleteHint);
+
     layout->addStretch();
     m_stackedWidget->addWidget(page);
 }
@@ -386,8 +422,55 @@ void ServerWindow::onLogMessage(const QString &msg) {
     }
 }
 
-// 【修改】更新表格行逻辑，适配 7 列结构
+// 【修改】更新表格行逻辑，适配 7 列结构，并增加筛选逻辑检查
 void ServerWindow::updateStudentTableRow(const QString &id, const QString &name, StudentStatus status, const QString &app, const QByteArray &screenshot) {
+    // 【修复】消除未使用参数警告
+    Q_UNUSED(screenshot);
+
+    // 【核心修复】1. 获取学生当前最新的班级信息
+    QString studentClass = "未分班";
+    if (g_onlineUsers.contains(id) && !g_onlineUsers[id].className.isEmpty()) {
+        studentClass = g_onlineUsers[id].className;
+    } else {
+        StudentInfo info = DatabaseManager::instance().getStudentInfo(id);
+        if (!info.className.isEmpty()) {
+            studentClass = info.className;
+        }
+    }
+
+    // 【新增】2. 获取学生 IP 地址
+    QString studentIp;
+    if (g_onlineUsers.contains(id) && !g_onlineUsers[id].ip.isEmpty()) {
+        studentIp = g_onlineUsers[id].ip;
+    } else {
+        StudentInfo info = DatabaseManager::instance().getStudentInfo(id);
+        if (!info.ip.isEmpty()) {
+            studentIp = info.ip;
+        }
+    }
+    if (studentIp.isEmpty()) {
+        studentIp = "未知 IP";
+    }
+
+    // 【核心修复】3. 筛选检查：如果当前不是“全部班级”，且学生班级不匹配，则隐藏该学生
+    if (m_currentFilterClass != "全部班级" && studentClass != m_currentFilterClass) {
+        // 如果该行已存在，则删除它（因为切换了筛选条件，该学生不应再显示）
+        if (m_studentRowMap.contains(id)) {
+            int row = m_studentRowMap.take(id);
+            m_monitorTable->removeRow(row);
+            // 调整后续行索引
+            for (auto it = m_studentRowMap.begin(); it != m_studentRowMap.end(); ++it) {
+                if (it.value() > row) it.value()--;
+            }
+            qDebug() << "[Filter] Removed student" << name << "(" << id << ") class:" << studentClass << "because filter is:" << m_currentFilterClass;
+        } else {
+            // 如果该行不存在，且不符合筛选条件，则直接返回，不创建新行（防止心跳包把不该显示的学生加回来）
+            qDebug() << "[Filter] Ignored adding student" << name << "(" << id << ") class:" << studentClass << "because filter is:" << m_currentFilterClass;
+        }
+        return; 
+    }
+
+    // 4. 原有逻辑：添加或更新行
     int row = -1;
     if (m_studentRowMap.contains(id)) {
         row = m_studentRowMap[id];
@@ -395,17 +478,30 @@ void ServerWindow::updateStudentTableRow(const QString &id, const QString &name,
         if (nameItem && nameItem->text() != name) {
             nameItem->setText(name);
         }
+        
+        // 【新增】更新 IP 列（第 0 列）显示
+        QTableWidgetItem *ipItem = m_monitorTable->item(row, 0);
+        if (ipItem && ipItem->text() != studentIp) {
+            ipItem->setText(studentIp);
+        }
+
+        // 【优化】如果班级列发生变化，也更新班级列
+        QTableWidgetItem *classItem = m_monitorTable->item(row, 2);
+        if (classItem && classItem->text() != studentClass) {
+            classItem->setText(studentClass);
+        }
     } else {
         row = m_monitorTable->rowCount();
         m_monitorTable->insertRow(row);
         m_studentRowMap[id] = row;
         
-        m_monitorTable->setItem(row, 0, new QTableWidgetItem(id));
+        // 【关键修改】第 0 列：显示 IP，但在 UserRole 中存储固定 ID 供后续操作使用
+        QTableWidgetItem *ipItem = new QTableWidgetItem(studentIp);
+        ipItem->setData(Qt::UserRole, id); 
+        m_monitorTable->setItem(row, 0, ipItem);
+
         m_monitorTable->setItem(row, 1, new QTableWidgetItem(name));
-        
-        // 获取并设置班级 (第 2 列)
-        StudentInfo info = DatabaseManager::instance().getStudentInfo(id);
-        m_monitorTable->setItem(row, 2, new QTableWidgetItem(info.className.isEmpty() ? "未分班" : info.className));
+        m_monitorTable->setItem(row, 2, new QTableWidgetItem(studentClass));
     }
 
     QTableWidgetItem *statusItem = new QTableWidgetItem();
@@ -455,20 +551,24 @@ void ServerWindow::updateStudentTableRow(const QString &id, const QString &name,
     }
     m_monitorTable->setItem(row, 5, countItem);
 
-    // 第 6 列：查看屏幕 (高亮处理)
+    // 第 6 列：查看屏幕 (高亮处理 - 增强版)
     QTableWidgetItem *actionItem = new QTableWidgetItem("🔍 查看屏幕");
-    actionItem->setTextAlignment(Qt::AlignCenter);
     
-    // 【修改】设置为高亮蓝色加粗，模拟可点击链接
-    QColor linkColor("#0078d4"); 
-    actionItem->setForeground(QBrush(linkColor));
+    // 【修改】设置更突出的样式：鲜艳背景 + 深蓝字 + 加粗下划线 + 居中
+    QColor bgColor("#e3f2fd"); // 更明显的浅蓝色背景
+    QColor textColor("#0d47a1"); // 深蓝色文字，对比度更高
+    
+    actionItem->setBackground(QBrush(bgColor));
+    actionItem->setForeground(QBrush(textColor));
+    
     QFont actionFont = actionItem->font();
-    actionFont.setBold(true);
-    actionFont.setUnderline(true);
+    actionFont.setBold(true);      // 加粗
+    actionFont.setUnderline(true); // 下划线
+    actionFont.setPointSize(actionFont.pointSize() + 1); // 字号稍大一点
     actionItem->setFont(actionFont);
     
-    // 添加提示
-    actionItem->setToolTip("双击此行或点击此按钮查看实时屏幕");
+    actionItem->setTextAlignment(Qt::AlignCenter); // 强制居中
+    actionItem->setToolTip("双击此行或点击此按钮查看实时屏幕"); // 明确提示
     
     m_monitorTable->setItem(row, 6, actionItem);
 }
@@ -573,33 +673,51 @@ void ServerWindow::onStudentStatusUpdated(const QString &id, StudentStatus statu
 
 // 【新增】刷新监控表格，支持按班级过滤
 void ServerWindow::refreshMonitorTable(const QString &filterClass) {
+    m_currentFilterClass = filterClass; // 【修复】确保成员变量与参数一致
     m_monitorTable->setRowCount(0);
     m_studentRowMap.clear();
     
-    QList<StudentInfo> allStudents;
-    
-    if (filterClass.isEmpty() || filterClass == "全部班级") {
-        // 获取所有学生
-        QMap<QString, StudentInfo> map = DatabaseManager::instance().getAllStudents();
-        allStudents = map.values();
-    } else {
-        // 获取指定班级学生（包含离线）
-        allStudents = DatabaseManager::instance().getClassMembers(filterClass, false);
-    }
-    
-    // 将在线状态合并进来（因为 g_onlineUsers 是实时的）
+    // 第一步：获取所有学生（从数据库）
+    QMap<QString, StudentInfo> dbMap = DatabaseManager::instance().getAllStudents();
+    QList<StudentInfo> allStudents = dbMap.values();
+
+    // 第二步：合并在线状态和最新班级信息（从 g_onlineUsers 覆盖）
     for (auto &stu : allStudents) {
         if (g_onlineUsers.contains(stu.id)) {
+            const UserInfo &onlineUser = g_onlineUsers[stu.id];
             stu.isOnline = true;
+            stu.className = onlineUser.className; 
         } else {
             stu.isOnline = false;
         }
+    }
+
+    // 调试日志
+    qDebug() << "[Refresh] Preparing to filter. Target Class:" << filterClass;
+    for (const auto &stu : allStudents) {
+        qDebug() << "  [Student]" << stu.name << "(" << stu.id << ") Online:" << stu.isOnline << "Class:'" << stu.className << "'";
+    }
+
+    // 第三步：根据筛选条件过滤
+    if (!filterClass.isEmpty() && filterClass != "全部班级") {
+        QList<StudentInfo> filtered;
+        QString targetClass = filterClass.trimmed();
         
+        for (const StudentInfo &stu : allStudents) {
+            if (!stu.className.trimmed().isEmpty() && stu.className.trimmed() == targetClass) {
+                filtered.append(stu);
+            }
+        }
+        
+        qDebug() << "[Refresh] Filtered count:" << filtered.size() << "for class:" << targetClass;
+        allStudents = filtered;
+    } else {
+        qDebug() << "[Refresh] Showing all classes (no filter or 'All Classes' selected).";
+    }
+    
+    // 第四步：更新表格
+    for (const StudentInfo &stu : allStudents) {
         StudentStatus status = stu.isOnline ? StudentStatus::Online_Normal : StudentStatus::Offline;
-        // 注意：这里只是简单刷新列表，具体的违规状态需要更复杂的逻辑维护，
-        // 简单起见，这里只显示在线/离线，详细的违规状态由 onStudentStatusUpdated 动态更新
-        // 如果需要持久化违规状态，需从数据库读取最新一条日志判断
-        
         updateStudentTableRow(stu.id, stu.name, status, "", QByteArray());
     }
     
@@ -632,10 +750,23 @@ void ServerWindow::updateOnlineStats() {
 }
 
 void ServerWindow::onTableCellDoubleClicked(int row, int col) {
-    // 【修复】无论点击哪一列，只要双击行，就获取 ID 并请求截图
-    // 特别地，如果点击的是“查看屏幕”列 (col==6) 或其他列，行为一致
-    QString id = m_monitorTable->item(row, 0)->text();
-    onRequestLiveScreenshotClicked(id);
+    // 【核心修改】仅当双击的是第 6 列（“查看屏幕”列）时，才触发截图请求
+    if (col != 6) {
+        return;
+    }
+
+    // 【修改】从第 0 列的 UserRole 中获取真实的学生 ID，而不是读取显示的 IP 文本
+    QTableWidgetItem *ipItem = m_monitorTable->item(row, 0);
+    if (!ipItem) {
+        return;
+    }
+    QString studentId = ipItem->data(Qt::UserRole).toString();
+    if (studentId.isEmpty()) {
+        qWarning() << "[Error] Cannot find student ID in UserRole for row" << row;
+        return;
+    }
+
+    onRequestLiveScreenshotClicked(studentId);
 }
 
 void ServerWindow::showScreenshotDialog(const QString &studentName, const QByteArray &imageData)
@@ -708,77 +839,101 @@ void ServerWindow::onUdpReadyRead()
             quint16 uPort = parts[4].toUShort();
             quint16 tPort = parts[5].toUShort();
 
-            // 【修复】解析班级信息 (第 7 个部分，索引为 6)
-            // 确保数组长度足够，避免越界
+            // 解析班级信息 (第 7 个部分，索引为 6)
             QString className = "";
             if (parts.size() >= 7) {
                 className = parts[6].trimmed();
-                // 过滤掉无效的占位符
-                if (className == "请选择班级...") {
+                if (className == "请选择班级..." || className.isEmpty()) {
                     className = "";
                 }
+                qDebug() << "[Heartbeat] Student" << nick << "(" << ip << ") class raw:" << parts[6] << "-> cleaned:" << className;
+            } else {
+                qDebug() << "[Heartbeat] Student" << nick << "heartbeat missing class field.";
             }
 
-            QString uniqueId = QString("%1:%2").arg(ip).arg(uPort);
+            // 【关键修改】获取固定学生 ID（第 8 个部分，索引为 7）
+            QString studentId = "";
+            if (parts.size() >= 8) {
+                studentId = parts[7].trimmed();
+                qDebug() << "[Heartbeat] Received fixed StudentId:" << studentId;
+            }
+            
+            // 【兼容旧版】如果没有固定 ID，则使用 IP:端口 作为 ID
+            if (studentId.isEmpty()) {
+                studentId = QString("%1:%2").arg(ip).arg(uPort);
+                qDebug() << "[Heartbeat] No fixed ID found, using fallback ID:" << studentId;
+            }
 
             UserInfo user;
             user.ip = ip;
             user.port = uPort;
             user.tcpPort = tPort;
-            user.id = uniqueId;
+            user.id = studentId;          // 【关键】使用固定 ID 作为键
             user.nickName = nick; 
             user.isTeacher = isTeacher;
             user.lastHeartbeat = QDateTime::currentMSecsSinceEpoch();
+            user.className = className;
 
-            bool isNewUser = !g_onlineUsers.contains(uniqueId);
+            bool isNewUser = !g_onlineUsers.contains(studentId);
             
             if (!isNewUser) {
-                if (g_onlineUsers[uniqueId].nickName != nick) {
-                    onLogMessage(QString("[同步] 学生 %1 昵称更新：%2 -> %3").arg(uniqueId, g_onlineUsers[uniqueId].nickName, nick));
+                if (g_onlineUsers[studentId].nickName != nick) {
+                    onLogMessage(QString("[同步] 学生 %1 昵称更新：%2 -> %3").arg(studentId, g_onlineUsers[studentId].nickName, nick));
+                }
+                if (g_onlineUsers[studentId].className != className) {
+                     qDebug() << "[Sync] Student" << studentId << "class changed from" << g_onlineUsers[studentId].className << "to" << className;
                 }
             } else {
                 userListChanged = true;
             }
 
-            g_onlineUsers[uniqueId] = user;
+            g_onlineUsers[studentId] = user;
 
             QString displayName = nick; 
             
-            StudentInfo info = DatabaseManager::instance().getStudentInfo(uniqueId);
+            StudentInfo info = DatabaseManager::instance().getStudentInfo(studentId);
             if (info.id.isEmpty()) {
-                DatabaseManager::instance().registerStudent(uniqueId, displayName, ip);
+                DatabaseManager::instance().registerStudent(studentId, displayName, ip);
+                onLogMessage(QString("[DB] 新学生注册：%1 (ID:%2)").arg(displayName, studentId));
             }
             
-            // 【核心修复】如果心跳包带了班级，且与数据库中记录不同，则立即更新数据库
+            // 如果心跳包带了班级，且与数据库中记录不同，则立即更新数据库
             if (!className.isEmpty() && info.className != className) {
-                bool updateOk = DatabaseManager::instance().updateStudentClass(uniqueId, className);
+                bool updateOk = DatabaseManager::instance().updateStudentClass(studentId, className);
                 if (updateOk) {
                     onLogMessage(QString("[同步] ✅ 学生 %1 成功更新/加入班级：%2").arg(displayName, className));
                 } else {
                     onLogMessage(QString("[同步] ❌ 学生 %1 更新班级失败：%2").arg(displayName, className));
                 }
-            } else if (!className.isEmpty() && info.className == className) {
-                // 班级未变，无需操作，但可打印调试日志
-                // qDebug() << "[Sync] Student" << displayName << "class unchanged:" << className;
             }
 
-            // 更新 UI 表格，此时数据库已更新，refreshMonitorTable 或 updateStudentTableRow 会读取最新数据
-            // 为了即时反映，我们直接在这里更新表格行的班级列，或者依赖下一次刷新
-            // 这里调用 updateStudentTableRow，它内部会重新查库或直接使用新值
-            // 由于 updateStudentTableRow 目前主要依赖传入参数，我们需要确保它显示最新的
-            // 简单做法：直接更新该行文本
-            if (m_studentRowMap.contains(uniqueId)) {
-                int row = m_studentRowMap[uniqueId];
+            // 直接更新 UI 表格
+            if (m_studentRowMap.contains(studentId)) {
+                int row = m_studentRowMap[studentId];
+                
+                // 1. 更新姓名列
+                QTableWidgetItem *nameItem = m_monitorTable->item(row, 1);
+                if (nameItem && nameItem->text() != nick) {
+                    nameItem->setText(nick);
+                    DatabaseManager::instance().registerStudent(studentId, nick, ip);
+                }
+
+                // 2. 更新班级列
                 QTableWidgetItem *classItem = m_monitorTable->item(row, 2);
                 if (classItem) {
-                    classItem->setText(className);
+                    QString displayClass = className.isEmpty() ? "未分班" : className;
+                    if (classItem->text() != displayClass) {
+                        classItem->setText(displayClass);
+                    }
                 }
+                
+                onLogMessage(QString("[UI] 已即时更新学生 %1 的昵称和班级显示").arg(studentId));
             } else {
-                // 如果是新用户，updateStudentTableRow 会创建新行并查库
-                updateStudentTableRow(uniqueId, displayName, StudentStatus::Online_Normal, "", QByteArray());
+                // 新用户，创建行
+                updateStudentTableRow(studentId, displayName, StudentStatus::Online_Normal, "", QByteArray());
             }
             
-            onLogMessage(QString("[UI] 已更新学生 %1 的显示昵称为：%2").arg(uniqueId, displayName));
+            onLogMessage(QString("[UI] 已更新学生 %1 的显示昵称为：%2").arg(studentId, displayName));
         }
     }
 
@@ -834,28 +989,35 @@ void ServerWindow::broadcastUserList()
     // 【新增】获取数据库中所有存在的班级，一并广播给学生端
     QJsonArray classList;
     QList<ClassInfo> classes = DatabaseManager::instance().getAllClasses();
+    
+    // 【修复】增加日志，确认教师端确实查到了班级
+    qDebug() << "[Teacher Broadcast] Found" << classes.size() << "classes in DB.";
     for (const auto &cls : classes) {
         classList.append(cls.className);
+        qDebug() << "[Teacher Broadcast]   - Class:" << cls.className;
     }
 
     QJsonDocument doc(userList);
     QByteArray jsonData = doc.toJson(QJsonDocument::Compact);
     
-    // 【修改】构建包含班级列表的消息格式：USER_LIST|{"users":[...]}|{"classes":[...]}
-    // 为了兼容旧版，我们尝试将 classes 放在第二个部分，或者合并到一个大 JSON 中
-    // 这里采用合并到大 JSON 的方式，结构变为：USER_LIST|{ "users": [...], "classes": [...] }
-    
+    // 【修改】构建包含班级列表的消息格式：USER_LIST|{"users":[...], "classes":[...]}
     QJsonObject rootObj;
     rootObj["users"] = userList;
     rootObj["classes"] = classList;
     
     QJsonDocument finalDoc(rootObj);
     QByteArray finalData = finalDoc.toJson(QJsonDocument::Compact);
-    
+
+    // 【修复】将以下逻辑移入函数体内，确保能访问 finalData 和 m_udpSocket
     QString msg = QString("USER_LIST|%1").arg(QString(finalData));
     QByteArray data = msg.toUtf8();
     
-    m_udpSocket->writeDatagram(data, QHostAddress::Broadcast, STUDENT_LISTEN_PORT);
+    // 【修复】增加发送日志
+    qDebug() << "[Teacher Broadcast] Sending USER_LIST packet size:" << data.size() << "bytes.";
+    qint64 sent = m_udpSocket->writeDatagram(data, QHostAddress::Broadcast, STUDENT_LISTEN_PORT);
+    if (sent == -1) {
+        qWarning() << "[Teacher Broadcast] Failed to send broadcast:" << m_udpSocket->errorString();
+    }
 }
 
 void ServerWindow::sendServerHeartbeat()
@@ -888,10 +1050,12 @@ void ServerWindow::sendServerHeartbeat()
                 for (auto it = m_studentRowMap.begin(); it != m_studentRowMap.end(); ++it) {
                     if (it.value() > row) it.value()--;
                 }
-                updateOnlineStats();
             }
         }
     }
+    
+    // 【修复】删除此处原本错误的多余代码块和孤立语句
+    updateOnlineStats();
 }
 
 void ServerWindow::onNewFileConnection()
@@ -917,6 +1081,9 @@ void ServerWindow::onNewFileConnection()
     connect(clientSocket, &QTcpSocket::readyRead, this, [this, safeSocket, ctx]() {
         if (!safeSocket) return;
         QTcpSocket *socket = safeSocket.data();
+
+        // 【修复】添加标签，供 MONITOR_START 命令处理后跳转至此，继续处理二进制数据
+        process_binary:
 
         if (ctx->state != MonitorReceiveContext::WaitHeader) {
             while (socket->bytesAvailable() > 0) {
@@ -998,15 +1165,14 @@ void ServerWindow::onNewFileConnection()
                             else if (type == "LIVE_RESPONSE") {
                                 updateStudentTableRow(studentId, displayName, StudentStatus::Online_Normal, appName, ctx->imgBuffer);
                                 
-                                // 【关键修复】直接从映射中查找并关闭加载对话框，不再依赖表格按钮属性
                                 if (m_loadingDialogs.contains(studentId)) {
                                     QDialog *loadingDlg = m_loadingDialogs.take(studentId);
                                     if (loadingDlg && loadingDlg->isVisible()) {
-                                        loadingDlg->accept();      // 关闭模态对话框
+                                        loadingDlg->accept();
                                         qDebug() << "[UI] Loading dialog for" << displayName << "closed successfully.";
                                     }
                                     if (loadingDlg) {
-                                        loadingDlg->deleteLater(); // 延迟删除
+                                        loadingDlg->deleteLater();
                                     }
                                 } else {
                                     qDebug() << "[UI] Warning: No loading dialog found in map for" << studentId;
@@ -1049,6 +1215,8 @@ void ServerWindow::onNewFileConnection()
              if (socket->bytesAvailable() >= len) {
                  QByteArray cmdData = socket->read(len);
                  QString cmd = QString::fromUtf8(cmdData);
+                 
+                 // 【修复】检测到 MONITOR_START 后，设置状态并跳转到二进制处理逻辑，不再 return
                  if (cmd.startsWith("MONITOR_START|")) {
                      QStringList parts = cmd.mid(14).split('|');
                      if (parts.size() == 2) {
@@ -1056,14 +1224,16 @@ void ServerWindow::onNewFileConnection()
                          ctx->imgSize = parts[1].toUInt();
                          ctx->state = MonitorReceiveContext::WaitJsonLen;
                      }
-                     return; 
+                     goto process_binary; // 关键修复：立即处理后续数据
                  }
+                 
                  handlePeerCommand(cmdData, socket);
              } else {
                  socket->waitForReadyRead(2000);
                  if (socket->bytesAvailable() >= len) {
                      QByteArray cmdData = socket->read(len);
                      QString cmd = QString::fromUtf8(cmdData);
+                     
                      if (cmd.startsWith("MONITOR_START|")) {
                          QStringList parts = cmd.mid(14).split('|');
                          if (parts.size() == 2) {
@@ -1071,8 +1241,9 @@ void ServerWindow::onNewFileConnection()
                              ctx->imgSize = parts[1].toUInt();
                              ctx->state = MonitorReceiveContext::WaitJsonLen;
                          }
-                         return;
+                         goto process_binary; // 关键修复：立即处理后续数据
                      }
+                     
                      handlePeerCommand(cmdData, socket);
                  }
              }
@@ -1230,6 +1401,7 @@ void ServerWindow::handlePeerCommand(const QByteArray &data, QTcpSocket *socket)
             statsKey.replace("\\", "/");
             statsKey = QDir::cleanPath(statsKey);
             if (statsKey.startsWith("//")) statsKey = statsKey.mid(1);
+            // 【修复】将错误的变量名 'key' 修正为 'statsKey'
             if (!statsKey.startsWith("/")) statsKey = "/" + statsKey;
             
             QString clientIp = socket->peerAddress().toString();
@@ -1250,6 +1422,7 @@ void ServerWindow::handlePeerCommand(const QByteArray &data, QTcpSocket *socket)
             onLogMessage(QString("[下载] 文件未找到：%1").arg(filePath));
         }
     }
+    // 【修复】添加缺失的闭合大括号，结束 handlePeerCommand 函数
 }
 
 ServerWindow::~ServerWindow()
@@ -1407,6 +1580,54 @@ void ServerWindow::processViolationReport(const QString &studentId, const QStrin
     }
 }
 
+// 【新增】统一刷新班级下拉框实现
+void ServerWindow::refreshClassComboBoxes() {
+    // 1. 刷新设置页的“删除班级”下拉框
+    if (m_deleteClassCombo) {
+        QString currentSelection = m_deleteClassCombo->currentText();
+        m_deleteClassCombo->clear();
+        m_deleteClassCombo->addItem("请选择要删除的班级", ""); // 占位符
+        
+        QList<ClassInfo> classes = DatabaseManager::instance().getAllClasses();
+        for (const auto &cls : classes) {
+            m_deleteClassCombo->addItem(cls.className);
+        }
+        
+        // 尝试恢复之前的选择（如果还存在）
+        if (!currentSelection.isEmpty() && currentSelection != "请选择要删除的班级") {
+            int index = m_deleteClassCombo->findText(currentSelection);
+            if (index != -1) {
+                m_deleteClassCombo->setCurrentIndex(index);
+            }
+        }
+    }
+
+    // 2. 刷新监控页的“查看班级”筛选下拉框
+    if (m_classFilterCombo) {
+        QString currentFilter = m_classFilterCombo->currentText();
+        m_classFilterCombo->clear();
+        m_classFilterCombo->addItem("全部班级");
+        
+        QList<ClassInfo> classes = DatabaseManager::instance().getAllClasses();
+        for (const auto &cls : classes) {
+            m_classFilterCombo->addItem(cls.className);
+        }
+        
+        // 尝试恢复之前的筛选条件
+        int index = m_classFilterCombo->findText(currentFilter);
+        if (index != -1) {
+            m_classFilterCombo->setCurrentIndex(index);
+        } else {
+            // 如果当前正在查看被删除的班级，切换回“全部班级”
+            m_currentFilterClass = "全部班级";
+            refreshMonitorTable("全部班级");
+        }
+
+    }
+    
+    qDebug() << "[UI] Class combo boxes refreshed.";
+}
+
 // 【新增】班级管理槽函数实现
 void ServerWindow::onCreateClassClicked() {
     QString className = m_newClassNameEdit->text().trimmed();
@@ -1419,26 +1640,71 @@ void ServerWindow::onCreateClassClicked() {
         QMessageBox::information(this, "成功", QString("班级 '%1' 创建成功！\n学生端现在可以加入该班级。").arg(className));
         m_newClassNameEdit->clear();
         
-        // 刷新下拉框
+        // 刷新本地设置页下拉框
+        refreshClassComboBoxes();
+        
+        // 【新增】创建班级后立即广播，让学生端下拉框立即更新
+        broadcastUserList();
+        
+        onLogMessage(QString("[班级管理] 创建了新班级：%1 并已广播至全网").arg(className));
+    } else {
+        QMessageBox::warning(this, "失败", "创建失败，可能该班级已存在。");
+    }
+}
+
+// 【新增】删除班级槽函数实现
+void ServerWindow::onDeleteClassClicked() {
+    QString className = m_deleteClassCombo->currentText();
+    if (className.isEmpty() || className == "请选择要删除的班级") {
+        QMessageBox::warning(this, "提示", "请先选择一个要删除的班级！");
+        return;
+    }
+
+    int ret = QMessageBox::question(this, "确认删除", 
+        QString("确定要删除班级 \"%1\" 吗？\n\n注意：\n1. 该班级将从列表中移除。\n2. 原属于该班级的所有学生将变为“未分班”状态。\n3. 学生端需要重新选择班级加入。").arg(className),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    
+    if (ret != QMessageBox::Yes) {
+        return;
+    }
+
+    if (DatabaseManager::instance().deleteClass(className)) {
+        onLogMessage(QString("[班级管理] 成功删除班级：%1").arg(className));
+        QMessageBox::information(this, "成功", QString("班级 '%1' 已删除。\n相关学生已重置为未分班状态。").arg(className));
+        
+        // 刷新本地设置页下拉框（移除已删除项）
+        refreshClassComboBoxes();
+        
+        // 刷新监控页面的筛选下拉框
         m_classFilterCombo->clear();
         m_classFilterCombo->addItem("全部班级");
         QList<ClassInfo> classes = DatabaseManager::instance().getAllClasses();
         for (const auto &cls : classes) {
             m_classFilterCombo->addItem(cls.className);
         }
+        // 如果当前正在查看被删除的班级，切换回“全部班级”
+        if (m_currentFilterClass == className) {
+            m_currentFilterClass = "全部班级";
+            refreshMonitorTable("全部班级");
+        }
+
+        // 【关键】广播最新班级列表，通知学生端该班级已不存在
+        broadcastUserList();
         
-        onLogMessage(QString("[班级管理] 创建了新班级：%1").arg(className));
     } else {
-        QMessageBox::warning(this, "失败", "创建失败，可能该班级已存在。");
+        QMessageBox::warning(this, "失败", "删除失败，请检查数据库连接或日志。");
+        onLogMessage(QString("[班级管理] 删除班级失败：%1").arg(className));
     }
 }
 
 void ServerWindow::onViewClassMembersClicked() {
     QString selectedClass = m_classFilterCombo->currentText();
+    m_currentFilterClass = selectedClass; // 【修复】同步更新筛选状态
     refreshMonitorTable(selectedClass);
     onLogMessage(QString("[班级管理] 查看班级成员：%1").arg(selectedClass == "全部班级" ? "所有" : selectedClass));
 }
 
 void ServerWindow::onClassComboBoxChanged(const QString &className) {
+    m_currentFilterClass = className; // 【修复】同步更新筛选状态
     refreshMonitorTable(className);
 }

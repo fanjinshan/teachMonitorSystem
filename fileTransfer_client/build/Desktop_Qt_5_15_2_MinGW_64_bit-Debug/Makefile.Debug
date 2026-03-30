@@ -554,7 +554,12 @@ debug/client_core.o: ../../client_core.cpp ../../client.h \
 		../../../../5.15.2/mingw81_64/include/QtCore/qthread.h \
 		../../../../5.15.2/mingw81_64/include/QtCore/qdeadlinetimer.h \
 		../../../../5.15.2/mingw81_64/include/QtCore/qelapsedtimer.h \
-		../../../../5.15.2/mingw81_64/include/QtCore/QStringList
+		../../../../5.15.2/mingw81_64/include/QtCore/QStringList \
+		../../../../5.15.2/mingw81_64/include/QtCore/QUuid \
+		../../../../5.15.2/mingw81_64/include/QtCore/QSettings \
+		../../../../5.15.2/mingw81_64/include/QtCore/qsettings.h \
+		../../../../5.15.2/mingw81_64/include/QtWidgets/QFileDialog \
+		../../../../5.15.2/mingw81_64/include/QtWidgets/qfiledialog.h
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o debug\client_core.o ..\..\client_core.cpp
 
 debug/client_file.o: ../../client_file.cpp ../../client.h \

@@ -5,12 +5,14 @@ HEADERS += \
     clienthandler.h \
     databasemanager.h \
     fileserver.h \
+    logindialog.h \
     serverwindow.h
 
 SOURCES += \
     clienthandler.cpp \
     databasemanager.cpp \
     fileserver.cpp \
+    logindialog.cpp \
     main.cpp \
     serverwindow.cpp
 

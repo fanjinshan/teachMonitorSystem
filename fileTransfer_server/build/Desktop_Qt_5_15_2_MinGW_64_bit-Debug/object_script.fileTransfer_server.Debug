@@ -1,0 +1,11 @@
+debug/clienthandler.o
+debug/databasemanager.o
+debug/fileserver.o
+debug/logindialog.o
+debug/main.o
+debug/serverwindow.o
+debug/moc_clienthandler.o
+debug/moc_databasemanager.o
+debug/moc_fileserver.o
+debug/moc_logindialog.o
+debug/moc_serverwindow.o

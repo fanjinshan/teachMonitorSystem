@@ -31,6 +31,8 @@ static const QStringList BLACKLIST_APPS = {
     // --- 短视频/直播 (重点扩充) ---
     "douyin", "dy", "抖音", "douyin.exe", "dy.exe", "tiktok",
     "bilibili", "b 站", "哔哩哔哩", "bilibili.exe", "blive", "livehime",
+    // 【新增】补充 B 站常见变体写法
+    "b 站", "bilibili live",
     "kuaishou", "快手", "kwai", "gifshow",
     "huya", "虎牙", "yy", "duowan",
     "douyu", "斗鱼", "dylive",
@@ -85,6 +87,8 @@ static const QStringList BLACKLIST_APPS = {
     "iqiyi", "爱奇艺", "qiyi",
     "tudou", "土豆",
     "tencent video", "腾讯视频", "v.qq",
+    // 【新增】确保包含所有可能的 B 站相关写法
+    "b 站", "bilibili", "哔哩哔哩", 
     "netflix", "hulu", "disney+", "hbo",
     "pptv", "pps", "sohu video", "搜狐视频",
     "mgtv", "芒果 tv",
@@ -240,6 +244,9 @@ private:
     QString m_localSavePath;
     QString m_avatarPath;
 
+    // 【新增】固定设备标识与配置管理
+    QString m_studentId;          // 固定学生 ID（UUID）
+
     // 状态管理
     enum State {
         State_Offline,
@@ -293,6 +300,10 @@ private:
     bool m_isMonitoringEnabled;    // 是否开启了监控模式
     bool m_isReportingViolated;    // 【新增】防止重复上报同一应用的防抖标志
     qint64 m_lastViolatedTime;     // 【新增】记录上次违规结束的时间戳 (毫秒)，用于计算 10s 间隔
+
+    // 【新增】配置加载与保存函数声明
+    void loadUserSettings();
+    void saveUserSettings();
 
 signals:
     // 【修复】确保信号声明使用正确的枚举类型

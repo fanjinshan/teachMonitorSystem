@@ -64,12 +64,13 @@ void client::initUi()
     QWidget *userCard = new QWidget();
     userCard->setStyleSheet("background-color: #34495e; border-radius: 8px; margin: 0 10px;");
     QVBoxLayout *userLayout = new QVBoxLayout(userCard);
-    userLayout->setAlignment(Qt::AlignCenter);
+    userLayout->setAlignment(Qt::AlignCenter); // 确保布局内控件整体居中
     
     m_avatarLabel = new QLabel();
     m_avatarLabel->setFixedSize(60, 60);
-    m_avatarLabel->setStyleSheet("background-color: #ecf0f1; border-radius: 30px; border: 2px solid #bdc3c7;");
-    m_avatarLabel->setAlignment(Qt::AlignCenter);
+    // 【修改】增强样式，添加左右外边距微调视觉中心，并确保内容居中
+    m_avatarLabel->setStyleSheet("background-color: #ecf0f1; border-radius: 30px; border: 2px solid #bdc3c7; margin-left: 5px; margin-right: 5px;border:none");
+    m_avatarLabel->setAlignment(Qt::AlignCenter); // 确保图片/文字内容在 Label 内部居中
     m_avatarLabel->setText("👨‍🎓"); 
     m_avatarLabel->setFont(QFont("Segoe UI", 30));
     
@@ -81,7 +82,7 @@ void client::initUi()
     m_statusLabel->setStyleSheet("color: #2ecc71; font-size: 12px;");
     m_statusLabel->setAlignment(Qt::AlignCenter);
 
-    userLayout->addWidget(m_avatarLabel);
+    userLayout->addWidget(m_avatarLabel, 0, Qt::AlignHCenter);
     userLayout->addWidget(m_nickNameLabel);
     userLayout->addWidget(m_statusLabel);
     leftLayout->addWidget(userCard);
@@ -90,7 +91,7 @@ void client::initUi()
     m_navList->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_navList->setFixedHeight(180);
     
-    QStringList navItems = {"💬 消息列表", "📁 共享文件", "⚙️ 个人设置"};
+    QStringList navItems = {"💬 成员列表", "📁 共享文件", "⚙️ 个人设置"};
     for (const QString &item : navItems) {
         QListWidgetItem *navItem = new QListWidgetItem(item);
         navItem->setSizeHint(QSize(0, 50));
@@ -255,8 +256,8 @@ void client::initUi()
 
     // --- 昵称设置卡片 (原有) ---
     QWidget *nickCard = new QWidget();
-    nickCard->setStyleSheet("background-color: white; border-radius: 10px; padding: 25px;"); 
-    nickCard->setMaximumWidth(500);
+    nickCard->setStyleSheet("background-color: white; border-radius: 10px; padding: 25px;");
+    nickCard->setFixedWidth(500);
     QVBoxLayout *nickLayout = new QVBoxLayout(nickCard);
     nickLayout->setSpacing(15); 
     
@@ -286,13 +287,14 @@ void client::initUi()
     nickContainerLayout->setContentsMargins(0, 0, 0, 0);
     nickContainerLayout->addWidget(nickCard);
     nickContainerLayout->addStretch();
-    
+    nickContainerLayout->setAlignment(Qt::AlignHCenter);
+
     setLayout->addWidget(nickContainer);
 
     // --- 【新增】班级管理卡片 ---
     QWidget *classCard = new QWidget();
     classCard->setStyleSheet("background-color: white; border-radius: 10px; padding: 25px;");
-    classCard->setMaximumWidth(500);
+    classCard->setFixedWidth(500);
     QVBoxLayout *classLayout = new QVBoxLayout(classCard);
     classLayout->setSpacing(15);
 
@@ -315,7 +317,51 @@ void client::initUi()
     m_classComboBox->addItem("请选择班级...", ""); 
     
     m_classComboBox->setFixedHeight(45);
-    m_classComboBox->setStyleSheet("border: 1px solid #ddd; border-radius: 6px; padding: 0 10px; font-size: 15px; background-color: #fafafa;");
+    // 【修复】完善 QComboBox 样式，明确指定 hover 和 selected 状态的背景与文字颜色，防止鼠标悬浮时文字变白消失
+    m_classComboBox->setStyleSheet(R"(
+        QComboBox {
+            border: 1px solid #ddd; 
+            border-radius: 6px; 
+            padding: 0 10px; 
+            font-size: 15px; 
+            background-color: #fafafa;
+            color: #333;
+        }
+        QComboBox::drop-down {
+            border: none;
+            width: 30px;
+        }
+        QComboBox::down-arrow {
+            image: none;
+            border-left: 5px solid transparent;
+            border-right: 5px solid transparent;
+            border-top: 8px solid #7f8c8d;
+            margin-right: 10px;
+        }
+        QComboBox QAbstractItemView {
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            background-color: white;
+            selection-background-color: #3498db;
+            selection-color: white;
+            outline: none;
+            padding: 5px;
+        }
+        QComboBox QAbstractItemView::item {
+            min-height: 40px;
+            padding: 5px 10px;
+            color: #333;
+        }
+        QComboBox QAbstractItemView::item:hover {
+            background-color: #eef2f7;
+            color: #333;
+        }
+        QComboBox QAbstractItemView::item:selected {
+            background-color: #3498db;
+            color: white;
+        }
+    )");
+    m_classComboBox->setFixedWidth(200);
     classInputLayout->addWidget(m_classComboBox);
 
     m_joinClassBtn = new QPushButton("加入班级");
@@ -339,13 +385,14 @@ void client::initUi()
     classContainerLayout->setContentsMargins(0, 0, 0, 0);
     classContainerLayout->addWidget(classCard);
     classContainerLayout->addStretch();
+    classContainerLayout->setAlignment(Qt::AlignHCenter);
 
     setLayout->addWidget(classContainer);
 
     // --- 头像设置卡片 (原有) ---
     QWidget *avatarCard = new QWidget();
     avatarCard->setStyleSheet("background-color: white; border-radius: 10px; padding: 25px;");
-    avatarCard->setMaximumWidth(500);
+    avatarCard->setFixedWidth(500);
     QVBoxLayout *avatarLayout = new QVBoxLayout(avatarCard);
     avatarLayout->setSpacing(15);
 
@@ -371,6 +418,7 @@ void client::initUi()
     avatarContainerLayout->setContentsMargins(0, 0, 0, 0);
     avatarContainerLayout->addWidget(avatarCard);
     avatarContainerLayout->addStretch();
+    avatarContainerLayout->setAlignment(Qt::AlignHCenter);
 
     setLayout->addWidget(avatarContainer);
     setLayout->addStretch();
@@ -574,42 +622,6 @@ void client::onQuitClicked()
     if (QMessageBox::question(this, "确认退出", "确定要退出客户端吗？") == QMessageBox::Yes) {
         qApp->quit();
     }
-}
-
-void client::onSaveNicknameClicked()
-{
-    QString newNick = m_nicknameEdit->text().trimmed();
-    if (newNick.isEmpty()) {
-        QMessageBox::warning(this, "提示", "昵称不能为空");
-        return;
-    }
-
-    m_myNickName = newNick;
-    m_nickNameLabel->setText(m_myNickName);
-    this->setWindowTitle("智慧教室客户端 - " + m_myNickName);
-    updateUserListFromMap();
-    sendHeartbeat();
-    QMessageBox::information(this, "成功", "昵称已修改为：" + newNick + "\n将同步至教师端。");
-}
-
-void client::onChangeAvatarClicked()
-{
-    QString filePath = QFileDialog::getOpenFileName(this, "选择头像图片", "", 
-        "Image Files (*.png *.jpg *.jpeg *.bmp *.gif)");
-    
-    if (filePath.isEmpty()) return;
-
-    m_avatarPath = filePath;
-    QPixmap originalPix(filePath);
-    if (originalPix.isNull()) {
-        QMessageBox::warning(this, "错误", "无法加载该图片文件");
-        return;
-    }
-
-    QPixmap scaledPix = originalPix.scaled(60, 60, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-    m_avatarLabel->setPixmap(scaledPix);
-    m_avatarLabel->setText("");
-    QMessageBox::information(this, "成功", "头像已更换");
 }
 
 void client::onManualConnectClicked()

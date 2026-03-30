@@ -131,8 +131,8 @@ void ClickableLabel::clicked()
     QMetaObject::activate(this, &staticMetaObject, 0, nullptr);
 }
 struct qt_meta_stringdata_ServerWindow_t {
-    QByteArrayData data[30];
-    char stringdata0[424];
+    QByteArrayData data[31];
+    char stringdata0[445];
 };
 #define QT_MOC_LITERAL(idx, ofs, len) \
     Q_STATIC_BYTE_ARRAY_DATA_HEADER_INITIALIZER_WITH_OFFSET(len, \
@@ -168,9 +168,10 @@ QT_MOC_LITERAL(23, 320, 4), // "data"
 QT_MOC_LITERAL(24, 325, 11), // "QTcpSocket*"
 QT_MOC_LITERAL(25, 337, 6), // "socket"
 QT_MOC_LITERAL(26, 344, 20), // "onCreateClassClicked"
-QT_MOC_LITERAL(27, 365, 25), // "onViewClassMembersClicked"
-QT_MOC_LITERAL(28, 391, 22), // "onClassComboBoxChanged"
-QT_MOC_LITERAL(29, 414, 9) // "className"
+QT_MOC_LITERAL(27, 365, 20), // "onDeleteClassClicked"
+QT_MOC_LITERAL(28, 386, 25), // "onViewClassMembersClicked"
+QT_MOC_LITERAL(29, 412, 22), // "onClassComboBoxChanged"
+QT_MOC_LITERAL(30, 435, 9) // "className"
 
     },
     "ServerWindow\0onNavMonitorClicked\0\0"
@@ -183,7 +184,7 @@ QT_MOC_LITERAL(29, 414, 9) // "className"
     "broadcastUserList\0onNewFileConnection\0"
     "handlePeerCommand\0data\0QTcpSocket*\0"
     "socket\0onCreateClassClicked\0"
-    "onViewClassMembersClicked\0"
+    "onDeleteClassClicked\0onViewClassMembersClicked\0"
     "onClassComboBoxChanged\0className"
 };
 #undef QT_MOC_LITERAL
@@ -194,7 +195,7 @@ static const uint qt_meta_data_ServerWindow[] = {
        8,       // revision
        0,       // classname
        0,    0, // classinfo
-      15,   14, // methods
+      16,   14, // methods
        0,    0, // properties
        0,    0, // enums/sets
        0,    0, // constructors
@@ -202,21 +203,22 @@ static const uint qt_meta_data_ServerWindow[] = {
        0,       // signalCount
 
  // slots: name, argc, parameters, tag, flags
-       1,    0,   89,    2, 0x08 /* Private */,
-       3,    0,   90,    2, 0x08 /* Private */,
-       4,    0,   91,    2, 0x08 /* Private */,
-       5,    1,   92,    2, 0x08 /* Private */,
-       7,    4,   95,    2, 0x08 /* Private */,
-      13,    2,  104,    2, 0x08 /* Private */,
-      16,    1,  109,    2, 0x08 /* Private */,
-      18,    0,  112,    2, 0x08 /* Private */,
-      19,    0,  113,    2, 0x08 /* Private */,
-      20,    0,  114,    2, 0x08 /* Private */,
-      21,    0,  115,    2, 0x08 /* Private */,
-      22,    2,  116,    2, 0x08 /* Private */,
-      26,    0,  121,    2, 0x08 /* Private */,
-      27,    0,  122,    2, 0x08 /* Private */,
-      28,    1,  123,    2, 0x08 /* Private */,
+       1,    0,   94,    2, 0x08 /* Private */,
+       3,    0,   95,    2, 0x08 /* Private */,
+       4,    0,   96,    2, 0x08 /* Private */,
+       5,    1,   97,    2, 0x08 /* Private */,
+       7,    4,  100,    2, 0x08 /* Private */,
+      13,    2,  109,    2, 0x08 /* Private */,
+      16,    1,  114,    2, 0x08 /* Private */,
+      18,    0,  117,    2, 0x08 /* Private */,
+      19,    0,  118,    2, 0x08 /* Private */,
+      20,    0,  119,    2, 0x08 /* Private */,
+      21,    0,  120,    2, 0x08 /* Private */,
+      22,    2,  121,    2, 0x08 /* Private */,
+      26,    0,  126,    2, 0x08 /* Private */,
+      27,    0,  127,    2, 0x08 /* Private */,
+      28,    0,  128,    2, 0x08 /* Private */,
+      29,    1,  129,    2, 0x08 /* Private */,
 
  // slots: parameters
     QMetaType::Void,
@@ -233,7 +235,8 @@ static const uint qt_meta_data_ServerWindow[] = {
     QMetaType::Void, QMetaType::QByteArray, 0x80000000 | 24,   23,   25,
     QMetaType::Void,
     QMetaType::Void,
-    QMetaType::Void, QMetaType::QString,   29,
+    QMetaType::Void,
+    QMetaType::Void, QMetaType::QString,   30,
 
        0        // eod
 };
@@ -257,8 +260,9 @@ void ServerWindow::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id
         case 10: _t->onNewFileConnection(); break;
         case 11: _t->handlePeerCommand((*reinterpret_cast< const QByteArray(*)>(_a[1])),(*reinterpret_cast< QTcpSocket*(*)>(_a[2]))); break;
         case 12: _t->onCreateClassClicked(); break;
-        case 13: _t->onViewClassMembersClicked(); break;
-        case 14: _t->onClassComboBoxChanged((*reinterpret_cast< const QString(*)>(_a[1]))); break;
+        case 13: _t->onDeleteClassClicked(); break;
+        case 14: _t->onViewClassMembersClicked(); break;
+        case 15: _t->onClassComboBoxChanged((*reinterpret_cast< const QString(*)>(_a[1]))); break;
         default: ;
         }
     } else if (_c == QMetaObject::RegisterMethodArgumentMetaType) {
@@ -304,13 +308,13 @@ int ServerWindow::qt_metacall(QMetaObject::Call _c, int _id, void **_a)
     if (_id < 0)
         return _id;
     if (_c == QMetaObject::InvokeMetaMethod) {
-        if (_id < 15)
+        if (_id < 16)
             qt_static_metacall(this, _c, _id, _a);
-        _id -= 15;
+        _id -= 16;
     } else if (_c == QMetaObject::RegisterMethodArgumentMetaType) {
-        if (_id < 15)
+        if (_id < 16)
             qt_static_metacall(this, _c, _id, _a);
-        _id -= 15;
+        _id -= 16;
     }
     return _id;
 }

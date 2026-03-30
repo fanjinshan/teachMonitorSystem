@@ -19,20 +19,18 @@
 #include <QScreen>
 #include <QApplication>
 #include <QBuffer>
-// 【修复】添加缺失的 QThread 头文件以支持 msleep
 #include <QThread>
-// 【新增】用于字符串匹配
 #include <QStringList>
+#include <QUuid>
+#include <QSettings>
+#include <QFileDialog> // 【修复】添加缺失的头文件
 
-// 【新增】Windows API 头文件，用于获取前台应用信息
 #ifdef Q_OS_WIN
 #include <windows.h>
-// 【修复】添加 psapi.h 以支持 GetModuleFileNameExW
 #include <psapi.h>
 #endif
 
-// 【新增】用于验证代码版本的标记，如果日志没看到这个，说明没重新编译
-#define CODE_VERSION_TAG "v2.0_FixSavePath"
+#define CODE_VERSION_TAG "v2.1_FixUniqueId"
 
 client::client(QWidget *parent) :
     QMainWindow(parent),
@@ -48,6 +46,7 @@ client::client(QWidget *parent) :
     m_sharedDirPath(""),
     m_localSavePath("E:/fileReceive"),
     m_avatarPath(""), 
+    m_studentId(""),
     m_state(State_Offline),
     m_currentTargetIp(""),
     m_currentTargetPort(0),
@@ -66,7 +65,34 @@ client::client(QWidget *parent) :
     }
     if (m_myIp.isEmpty()) m_myIp = "127.0.0.1";
 
-    m_myNickName = "学生_" + m_myIp.split('.').last();
+    // 初始化自定义 UI
+    initUi();
+
+    // 【新增】加载固定学生 ID 和本地配置
+    loadUserSettings();
+
+    // 【修复】问题 1：加载配置后立即更新 UI 显示昵称和头像
+    if (!m_myNickName.isEmpty()) {
+        m_nickNameLabel->setText(m_myNickName);
+    }
+    
+    if (!m_avatarPath.isEmpty() && QFile::exists(m_avatarPath)) {
+        QPixmap originalPix(m_avatarPath);
+        if (!originalPix.isNull()) {
+            QPixmap scaledPix = originalPix.scaled(60, 60, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            m_avatarLabel->setPixmap(scaledPix);
+            m_avatarLabel->setText("");
+        }
+    }
+
+    // 如果昵称仍为空（首次运行），使用 IP 生成默认昵称
+    if (m_myNickName.isEmpty()) {
+        m_myNickName = "学生_" + m_myIp.split('.').last();
+        m_nicknameEdit->setText(m_myNickName);
+    } else {
+        m_nicknameEdit->setText(m_myNickName);
+    }
+
     m_myTcpPort = 20000 + QRandomGenerator::global()->bounded(10000);
     m_sharedDirPath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/MyShare";
     QDir().mkpath(m_sharedDirPath);
@@ -79,8 +105,15 @@ client::client(QWidget *parent) :
         }
     }
 
-    // 初始化自定义 UI (实现在 client_ui.cpp)
-    initUi();
+    // 【新增】如果头像路径已保存且文件存在，则加载显示
+    if (!m_avatarPath.isEmpty() && QFile::exists(m_avatarPath)) {
+        QPixmap originalPix(m_avatarPath);
+        if (!originalPix.isNull()) {
+            QPixmap scaledPix = originalPix.scaled(60, 60, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            m_avatarLabel->setPixmap(scaledPix);
+            m_avatarLabel->setText("");
+        }
+    }
 
     // 【新增】初始化定时器：固定每 5 分钟发送一次截图 (定期巡查)
     m_screenshotTimer = new QTimer(this);
@@ -96,12 +129,9 @@ client::client(QWidget *parent) :
     connect(m_appCheckTimer, &QTimer::timeout, this, &client::onCheckBlacklistTimeout);
     
     m_isMonitoringEnabled = false;
-    m_isReportingViolated = false; // 初始未上报
-    m_lastViolatedTime = 0;        // 【新增】初始化上次违规时间为 0
+    m_isReportingViolated = false;
+    m_lastViolatedTime = 0;
     
-    // 【新增】初始化班级信息
-    m_currentClassName = ""; 
-
     // 网络连接初始化
     connect(m_tcpSocket, &QTcpSocket::connected, this, &client::onConnected);
     connect(m_tcpSocket, &QTcpSocket::readyRead, this, &client::onReadyRead);
@@ -113,6 +143,75 @@ client::client(QWidget *parent) :
 client::~client()
 {
     delete ui;
+}
+
+// 【新增】加载用户设置（固定 ID、昵称、班级、头像、保存路径）
+void client::loadUserSettings()
+{
+    QSettings settings("YourCompany", "SmartClassroomClient");
+    
+    // 1. 加载或生成固定学生 ID
+    m_studentId = settings.value("studentId").toString();
+    if (m_studentId.isEmpty()) {
+        m_studentId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        settings.setValue("studentId", m_studentId);
+        qDebug() << "[Student] Generated new fixed ID:" << m_studentId;
+    } else {
+        qDebug() << "[Student] Loaded existing fixed ID:" << m_studentId;
+    }
+
+    // 2. 加载昵称
+    QString savedNick = settings.value("nickname").toString();
+    if (!savedNick.isEmpty()) {
+        m_myNickName = savedNick;
+    }
+
+    // 3. 加载班级
+    QString savedClass = settings.value("class").toString();
+    if (!savedClass.isEmpty()) {
+        m_currentClassName = savedClass;
+        qDebug() << "[Student] Loaded existing class:" << m_currentClassName;
+    }
+
+    // 4. 加载头像路径
+    QString savedAvatar = settings.value("avatar").toString();
+    if (!savedAvatar.isEmpty() && QFile::exists(savedAvatar)) {
+        m_avatarPath = savedAvatar;
+    }
+
+    // 5. 加载保存路径
+    QString savedSavePath = settings.value("savePath").toString();
+    if (!savedSavePath.isEmpty()) {
+        m_localSavePath = savedSavePath;
+    }
+
+    // 【新增】更新 UI 显示当前班级状态
+    QLabel *label = this->findChild<QLabel*>("currentClassLabel");
+    if (label) {
+        if (!m_currentClassName.isEmpty()) {
+            label->setText("当前班级：<b>" + m_currentClassName + "</b>");
+            label->setStyleSheet("color: #27ae60; font-size: 14px; font-weight: bold; margin-top: 5px;");
+            qDebug() << "[UI] Class label updated to:" << m_currentClassName;
+        } else {
+            label->setText("当前班级：未加入");
+            label->setStyleSheet("color: #e67e22; font-size: 14px; font-weight: bold; margin-top: 5px;");
+        }
+    }
+}
+
+// 【新增】保存用户设置
+void client::saveUserSettings()
+{
+    QSettings settings("YourCompany", "SmartClassroomClient");
+    settings.setValue("studentId", m_studentId);
+    settings.setValue("nickname", m_myNickName);
+    settings.setValue("class", m_currentClassName);
+    if (!m_avatarPath.isEmpty() && QFile::exists(m_avatarPath)) {
+        settings.setValue("avatar", m_avatarPath);
+    }
+    settings.setValue("savePath", m_localSavePath);
+    settings.sync(); // 强制写入磁盘
+    qDebug() << "[Settings] User settings saved.";
 }
 
 void client::startNetworkInitialization()
@@ -157,11 +256,9 @@ void client::startNetworkInitialization()
     
     sendHeartbeat(); 
 
-    // 【修复】网络初始化成功后，立即启动监控定时器，无需等待 TCP 连接
-    // 即使教师端未上线，定时器也会运行，但截图发送函数会因无目标而直接返回
     if (!m_appCheckTimer->isActive()) {
         m_isMonitoringEnabled = true;
-        m_appCheckTimer->start(1000); // 每秒检查一次前台应用
+        m_appCheckTimer->start(1000);
         qDebug() << "[Monitor] ✅ Real-time monitoring STARTED in startNetworkInitialization. Check interval: 1s.";
         qDebug() << "[Monitor] Timer active:" << m_appCheckTimer->isActive() << "Interval:" << m_appCheckTimer->interval();
     } else {
@@ -190,15 +287,16 @@ void client::sendHeartbeat()
 {
     if (m_state != State_Online) return;
 
-    // 【修改】心跳包增加班级信息字段 (第 6 个参数)
-    // 格式：HEARTBEAT|NickName|IsTeacher|IP|UdpPort|TcpPort|ClassName
-    QString msg = QString("HEARTBEAT|%1|%2|%3|%4|%5|%6")
+    // 【修改】心跳包增加固定学生 ID 字段 (第 8 个参数)
+    // 格式：HEARTBEAT|NickName|IsTeacher|IP|UdpPort|TcpPort|ClassName|StudentId
+    QString msg = QString("HEARTBEAT|%1|%2|%3|%4|%5|%6|%7")
                   .arg(m_myNickName)
                   .arg("0") 
                   .arg(m_myIp)
                   .arg(m_myUdpPort)
                   .arg(m_myTcpPort)
-                  .arg(m_currentClassName); // 发送当前班级
+                  .arg(m_currentClassName)
+                  .arg(m_studentId); // 发送固定 ID
     
     QByteArray data = msg.toUtf8();
     qint64 bytesSent = m_udpSocket->writeDatagram(data, QHostAddress::Broadcast, DEFAULT_TEACHER_UDP_PORT);
@@ -231,7 +329,6 @@ void client::onUdpReadyRead()
         QStringList parts = content.split('|');
 
         if (parts.size() >= 2 && parts[0] == "USER_LIST") {
-            // 【修改】解析新的 JSON 结构：{ "users": [...], "classes": [...] }
             QString jsonStr = parts[1];
             QJsonParseError error;
             QJsonDocument doc = QJsonDocument::fromJson(jsonStr.toUtf8(), &error);
@@ -259,28 +356,45 @@ void client::onUdpReadyRead()
                     }
                 }
 
-                // 【新增】2. 解析班级列表并更新 UI 下拉框
+                // 2. 解析班级列表并更新 UI 下拉框
                 if (rootObj.contains("classes") && rootObj["classes"].isArray()) {
                     QJsonArray classArray = rootObj["classes"].toArray();
+                    
+                    qDebug() << "[Class] Received class list from server, count:" << classArray.size();
+                    
                     if (m_classComboBox) {
-                        // 保存当前选中的班级（如果有）
                         QString currentSelection = m_classComboBox->currentText();
                         
-                        // 清空现有选项（保留占位符逻辑在 UI 层处理，这里全清重加）
                         m_classComboBox->clear();
                         m_classComboBox->addItem("请选择班级...", ""); 
                         
                         bool hasRealClasses = false;
+                        bool currentClassStillExists = false; 
+                        
                         for (const QJsonValue &val : classArray) {
                             QString className = val.toString();
                             if (!className.trimmed().isEmpty()) {
                                 m_classComboBox->addItem(className);
                                 hasRealClasses = true;
+                                if (className == m_currentClassName) {
+                                    currentClassStillExists = true;
+                                }
                             }
                         }
                         
-                        // 尝试恢复之前的选择
-                        if (!currentSelection.isEmpty() && currentSelection != "请选择班级...") {
+                        if (!m_currentClassName.isEmpty() && !currentClassStillExists) {
+                            qDebug() << "[Class] Current class '" << m_currentClassName << "' was deleted by teacher. Resetting...";
+                            m_currentClassName = ""; 
+                            
+                            QLabel *label = this->findChild<QLabel*>("currentClassLabel");
+                            if (label) {
+                                label->setText("当前班级：未加入 (原班级已被删除)");
+                                label->setStyleSheet("color: #e74c3c; font-size: 14px; font-weight: bold; margin-top: 5px;");
+                            }
+                            
+                            // 可选：弹窗提示用户
+                            // QMessageBox::information(this, "班级变更", "您所在的班级已被教师删除，您现已恢复为未分班状态。");
+                        } else if (!currentSelection.isEmpty() && currentSelection != "请选择班级..." && currentClassStillExists) {
                             int index = m_classComboBox->findText(currentSelection);
                             if (index != -1) {
                                 m_classComboBox->setCurrentIndex(index);
@@ -288,12 +402,14 @@ void client::onUdpReadyRead()
                         }
 
                         if (hasRealClasses) {
-                            qDebug() << "[Class] Updated class list from server, count:" << (classArray.size());
+                            m_classComboBox->repaint(); 
+                            qDebug() << "[Class] UI Updated successfully.";
                         }
                     }
+                } else {
+                    qDebug() << "[Class] JSON missing 'classes' field or not an array.";
                 }
             } else {
-                // 【兼容旧版】如果解析对象失败，尝试按旧版数组解析 (仅用户列表)
                 if (doc.isArray()) {
                      QSet<QString> currentVisibleIds; 
                      for (const QJsonValue &val : doc.array()) {
@@ -311,6 +427,9 @@ void client::onUdpReadyRead()
                         currentVisibleIds.insert(user.id);
                         updateUserList(user);
                     }
+                } else {
+                    qDebug() << "[UDP Error] Failed to parse USER_LIST JSON:" << error.errorString();
+                    qDebug() << "[UDP Error] Raw data preview:" << jsonStr.left(100);
                 }
             }
             return;
@@ -333,6 +452,15 @@ void client::onUdpReadyRead()
             user.lastHeartbeat = QDateTime::currentMSecsSinceEpoch();
 
             updateUserList(user);
+
+            if (isTeacher) {
+                if (m_currentTargetIp.isEmpty() || m_currentTargetPort != tPort || m_currentTargetIp != ip) {
+                    m_currentTargetIp = ip;
+                    m_currentTargetPort = tPort;
+                    m_currentTargetName = nick;
+                    qDebug() << "[Heartbeat] Updated teacher target to" << ip << ":" << tPort << "(" << nick << ")";
+                }
+            }
         }
     }
     
@@ -500,7 +628,6 @@ void client::showFirewallWarning() { QMessageBox::warning(this, "防火墙提示
 void client::onConnected()
 { 
     qDebug() << "Connected"; 
-    // 【删除】不再在这里启动监控，因为学生端没有持久 TCP 连接到教师端，此槽函数不会被调用
     qDebug() << "[Monitor] onConnected called (but monitoring should already be running from init).";
 }
 
@@ -509,29 +636,163 @@ void client::onDisconnected() { qDebug() << "Disconnected"; }
 void client::showFriendListPage() {}
 void client::showFileSharePage() {}
 
-// 【修改】实现黑名单即时检查逻辑：增加本地冷却期和严格的状态跳变检测
+void client::onSaveNicknameClicked()
+{
+    QString newNick = m_nicknameEdit->text().trimmed();
+    if (newNick.isEmpty()) {
+        QMessageBox::warning(this, "提示", "昵称不能为空");
+        return;
+    }
+
+    m_myNickName = newNick;
+    m_nickNameLabel->setText(m_myNickName);
+    this->setWindowTitle("智慧教室客户端 - " + m_myNickName);
+    updateUserListFromMap();
+    sendHeartbeat();
+    
+    // 【新增】保存昵称到本地配置
+    saveUserSettings();
+    
+    QMessageBox::information(this, "成功", "昵称已修改为：" + newNick + "\n将同步至教师端。");
+}
+
+void client::onChangeAvatarClicked()
+{
+    QString filePath = QFileDialog::getOpenFileName(this, "选择头像图片", "", 
+        "Image Files (*.png *.jpg *.jpeg *.bmp *.gif)");
+    
+    if (filePath.isEmpty()) return;
+
+    m_avatarPath = filePath;
+    QPixmap originalPix(filePath);
+    if (originalPix.isNull()) {
+        QMessageBox::warning(this, "错误", "无法加载该图片文件");
+        return;
+    }
+
+    QPixmap scaledPix = originalPix.scaled(60, 60, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    m_avatarLabel->setPixmap(scaledPix);
+    m_avatarLabel->setText("");
+    
+    // 【新增】保存头像路径到本地配置
+    saveUserSettings();
+    
+    QMessageBox::information(this, "成功", "头像已更换");
+}
+
 void client::onCheckBlacklistTimeout() {
     if (!m_isMonitoringEnabled) return;
 
     QString appName = getCurrentForegroundApp();
     
-    // 【调试】减少日志频率，仅每 30 秒打印一次当前应用，避免刷屏
     static int logCounter = 0;
     logCounter++;
-    if (logCounter % 30 == 0) { 
-        qDebug() << "[Monitor Tick] Current App:" << (appName.isEmpty() ? "(None)" : appName);
+    if (appName.isEmpty()) {
+        if (logCounter % 30 == 0) { 
+            qDebug() << "[Monitor Tick] Current App: (None/Empty)";
+        }
+    } else {
+        qDebug() << "[Monitor Tick] Current App:" << appName;
+    }
+
+    static const QStringList WHITELIST_APPS = {
+        "filetransfer_client", 
+        "serverwindow",
+        "explorer",            
+        "taskmgr",             
+        "applicationframehost",
+        "searchapp",           
+        "startmenuexperience", 
+        "vnc", "realvnc", "tightvnc", "ultravnc",
+        "teamviewer",
+        "anydesk",
+        "rustdesk",
+        "todesk",
+        "sunlogin", "向日葵",
+        "zoom",
+        "texmeeting", "腾讯会议",
+        "dingtalk", "钉钉",
+        "wemeetapp", "welink",
+        "deepseek", "深度求索",
+        "豆包", "doubao",
+        "通义千问", "tongyi", "qwen",
+        "kimi", "月之暗面",
+        "智谱清言", "zhipu", "glm",
+        "文心一言", "ernie",
+        "copilot", "github copilot",
+        "cursor",                
+        "poe",
+        "character.ai",
+        "devenv",              
+        "qtcreator",           
+        "vscode", "visual studio code",
+        "sublime_text", "sublime merge",
+        "notepad++", "notepadplusplus",
+        "jetbrains",           
+        "intellij", "idea",
+        "pycharm",
+        "clion",
+        "webstorm",
+        "phpstorm",
+        "goland",
+        "rider",
+        "datagrip",
+        "android studio", "studio64",
+        "eclipse",
+        "visualgdb",
+        "postman",
+        "insomnia",
+        "navicat",
+        "dbeaver",
+        "sqlworkbench",
+        "xshell", "xftp",
+        "putty", "winscp",
+        "wireshark",
+        "fiddler", "charles",
+        "git", "gitbash", "sourcetree", "tortoisegit", "tortoisehg",
+        "docker", "kubernetes", "kubectl",
+        "terminal", "wt", "windowsterminal",
+        "powershell", "cmd",
+        "notion",
+        "obsidian",
+        "typora",
+        "onenote",
+        "evernote",
+        "marktext",
+        "logseq",
+        "cherry studio",
+        "youdao", "有道词典",
+        "bing dict", "必应词典",
+        "金山词霸", "iciba",
+        "deepL", "deepl",
+        "bandizip",
+        "7-zip", "7z",
+        "winrar",
+        "everything",
+        "geek uninstaller",
+        "ruanmei", "软媒",
+        "dism++",
+    };
+
+    if (!appName.isEmpty()) {
+        QString lowerApp = appName.toLower();
+        for (const QString &white : WHITELIST_APPS) {
+            if (lowerApp.contains(white)) {
+                return; 
+            }
+        }
     }
 
     bool isViolated = false;
     QString matchedApp = ""; 
 
-    // 黑名单匹配逻辑
     if (!appName.isEmpty()) {
         for (const QString &keyword : BLACKLIST_APPS) {
             QString lowerKeyword = keyword.toLower();
             if (appName.contains(lowerKeyword)) {
                 isViolated = true;
                 matchedApp = appName; 
+                qDebug() << "[VIOLATION DETECTED] App:" << appName << "matched keyword:" << keyword;
                 break;
             }
         }
@@ -539,85 +800,65 @@ void client::onCheckBlacklistTimeout() {
 
     qint64 currentTime = QDateTime::currentMSecsSinceEpoch();
 
-    // 【核心修复】状态机逻辑 + 本地冷却期
     if (isViolated) {
-        // 场景 A：检测到违规应用
         if (!m_isReportingViolated) {
-            // 状态跳变：正常 -> 违规
-            // 检查是否在冷却期内（距离上次恢复是否不足 10 秒）
             qint64 timeSinceRecover = (m_lastViolatedTime == 0) ? 99999 : (currentTime - m_lastViolatedTime);
             
             if (timeSinceRecover >= 10000) {
-                // 冷却期已过，允许上报
                 qDebug() << "[STATUS CHANGE] Normal -> Violated! App:" << matchedApp << "(Cooldown passed)";
                 
-                // 立即上报完整违规报告（带截图）
                 captureAndSendScreenshot(false, matchedApp, false); 
                 
                 m_isReportingViolated = true;
-                // 注意：此时不更新 m_lastViolatedTime，因为它记录的是恢复时间
             } else {
-                // 冷却期内，静默忽略，不改变状态也不上报
                 qDebug() << "[COOLDOWN] Normal -> Violated ignored (within 10s cooldown). Time elapsed:" << timeSinceRecover << "ms";
-                // 保持 m_isReportingViolated = false，下次检测时会再次检查冷却期
             }
         } else {
-            // 持续违规中，静默忽略，不上报（防止每秒都发）
         }
     } else {
-        // 场景 B：未检测到违规应用
         if (m_isReportingViolated) {
-            // 状态跳变：违规 -> 正常
-            qDebug() << "[STATUS CHANGE] Violated -> Normal. Reporting recovery.";
+            qDebug() << "[STATUS CHANGE] Violated -> Normal. Reporting recovery immediately.";
             
-            // 记录恢复时间戳（用于后续冷却期计算）
             m_lastViolatedTime = currentTime;
             
-            // 上报恢复事件（不带截图）
             captureAndSendScreenshot(false, "Status_Recovered", false);
             
             m_isReportingViolated = false;
+            
+            qDebug() << "[RECOVERY SENT] Recovery signal sent to teacher. Flag reset.";
         }
-        // 持续正常中，静默忽略
     }
 }
 
-// 【修改】辅助函数：获取当前前台应用名称（Windows 平台实现）
-// 策略优化：
-// 1. 优先获取窗口标题 (Title) ，因为浏览器（Edge/Chrome）的进程名都是 msedge/chrome，无法区分具体网站。
-// 2. 如果标题匹配黑名单，直接返回标题。
-// 3. 如果标题未匹配，再尝试获取进程名（用于检测独立 exe 应用，如微信、游戏等）。
 QString client::getCurrentForegroundApp() {
 #ifdef Q_OS_WIN
     HWND hWnd = GetForegroundWindow();
     if (hWnd == NULL) {
-        // qDebug() << "[Monitor Debug] GetForegroundWindow() returned NULL. No active window.";
         return "";
     }
 
     QString resultName = "";
     
-    // --- 第一步：获取窗口标题 (Title) ---
-    // 浏览器标签页、UWP 应用等通常能在标题中找到特征字（如 "哔哩哔哩 (゜-゜) つロ 干杯~-bilibili"）
-    wchar_t title[512]; // 增大缓冲区以防长标题
+    wchar_t title[512]; 
     int len = GetWindowTextW(hWnd, title, 512);
     QString windowTitle = "";
     if (len > 0) {
         windowTitle = QString::fromWCharArray(title).toLower();
-        // qDebug() << "[Monitor Debug] Window Title:" << windowTitle;
         
-        // 【关键修改】先用标题匹配黑名单
+        qDebug() << "[Monitor Debug] Window Title:" << windowTitle;
+        
         for (const QString &keyword : BLACKLIST_APPS) {
             QString lowerKeyword = keyword.toLower();
             if (windowTitle.contains(lowerKeyword)) {
-                // qDebug() << "[Monitor Match] Found violation in Window Title:" << windowTitle << "(Keyword:" << keyword << ")";
-                return windowTitle; // 直接返回标题，包含完整信息
+                qDebug() << "[Monitor Match] Found violation in Window Title:" << windowTitle << "(Keyword:" << keyword << ")";
+                return windowTitle; 
             }
         }
+        qDebug() << "[Monitor Debug] Window Title did not match any blacklist keyword.";
+    } else {
+        qDebug() << "[Monitor Debug] GetWindowTextW returned empty or failed.";
     }
 
-    // --- 第二步：如果标题没命中，再获取进程名 (Process Name) ---
-    // 适用于独立应用程序（如 WeChat.exe, League of Legends.exe）
     DWORD processId = 0;
     GetWindowThreadProcessId(hWnd, &processId);
     
@@ -628,69 +869,79 @@ QString client::getCurrentForegroundApp() {
             if (GetModuleFileNameExW(hProcess, NULL, exePath, MAX_PATH)) {
                 QString fullPath = QString::fromWCharArray(exePath);
                 QFileInfo fi(fullPath);
-                QString procName = fi.fileName().toLower();
+                QString procName = fi.fileName().toLower(); 
                 
-                // 特殊处理：如果是浏览器进程，且标题没命中，说明是在看其他网页，不算违规（除非标题里有违规词，上面已判断）
-                // 这里主要为了捕获非浏览器的独立应用
-                if (procName != "msedge.exe" && procName != "chrome.exe" && procName != "firefox.exe" && procName != "iexplore.exe") {
-                    for (const QString &keyword : BLACKLIST_APPS) {
-                        QString lowerKeyword = keyword.toLower();
-                        if (procName.contains(lowerKeyword)) {
-                            // qDebug() << "[Monitor Match] Found violation in Process Name:" << procName << "(Keyword:" << keyword << ")";
-                            CloseHandle(hProcess);
-                            return procName;
-                        }
+                qDebug() << "[Monitor Debug] Process Name:" << procName;
+
+                QStringList browsers = {"chrome.exe", "msedge.exe", "firefox.exe", "iexplore.exe", "browser.exe", "360se.exe", "qqbrowser.exe"};
+                bool isBrowser = false;
+                for (const QString &b : browsers) {
+                    if (procName == b) {
+                        isBrowser = true;
+                        break;
                     }
-                } else {
-                    // qDebug() << "[Monitor Debug] Detected Browser (" << procName << "), relying on Window Title only.";
                 }
+
+                if (isBrowser) {
+                    qDebug() << "[Monitor Debug] Is Browser and Title not matched. Skipping process name check (Safe).";
+                    CloseHandle(hProcess);
+                    return ""; 
+                }
+
+                for (const QString &keyword : BLACKLIST_APPS) {
+                    QString lowerKeyword = keyword.toLower();
+                    QString procNameNoExt = fi.baseName().toLower();
+                    
+                    if (procName.contains(lowerKeyword) || procNameNoExt.contains(lowerKeyword)) {
+                        qDebug() << "[Monitor Match] Found violation in Process Name:" << procName << "(Keyword:" << keyword << ")";
+                        CloseHandle(hProcess);
+                        return procName;
+                    }
+                }
+                qDebug() << "[Monitor Debug] Process Name did not match any blacklist keyword.";
             } else {
-                // DWORD err = GetLastError();
-                // qDebug() << "[Monitor Debug] GetModuleFileNameExW failed for PID:" << processId;
+                DWORD err = GetLastError();
+                qDebug() << "[Monitor Debug] GetModuleFileNameExW failed for PID:" << processId << "Error:" << err;
             }
             CloseHandle(hProcess);
         } else {
-            // DWORD err = GetLastError();
-            // qDebug() << "[Monitor Debug] OpenProcess failed for PID:" << processId;
+            DWORD err = GetLastError();
+            qDebug() << "[Monitor Debug] OpenProcess failed for PID:" << processId << "Error:" << err;
         }
     }
 
-    // 如果都没命中，返回空
-    // qDebug() << "[Monitor Debug] No violation detected. Title:" << windowTitle << "Proc:" << (resultName.isEmpty() ? "N/A" : resultName);
     return ""; 
 
 #else
-    // qDebug() << "[Monitor Debug] Not running on Windows, getCurrentForegroundApp returns empty.";
     return "";
 #endif
 }
 
-// 【修改】辅助函数：截取屏幕并发送
 void client::captureAndSendScreenshot(bool isPeriodic, const QString &violatedAppName, bool countOnly)
 {
     Q_UNUSED(countOnly); 
     
     qDebug() << "[SCREENSHOT_SEND] Type:" << violatedAppName;
     
-    // 1. 检查是否有目标教师
     if (m_currentTargetIp.isEmpty() || m_currentTargetPort == 0) {
         bool found = false;
+        qDebug() << "[SCREENSHOT_SEND] Current target empty, searching online users...";
         for (auto it = m_onlineUsers.begin(); it != m_onlineUsers.end(); ++it) {
             if (it->isTeacher) {
                 m_currentTargetIp = it->ip;
                 m_currentTargetPort = it->tcpPort; 
                 m_currentTargetName = it->nickName;
                 found = true;
+                qDebug() << "[SCREENSHOT_SEND] Found teacher:" << it->nickName << "at" << it->ip << ":" << it->tcpPort;
                 break;
             }
         }
         if (!found) {
-            // 静默返回，避免频繁报错
+            qDebug() << "[SCREENSHOT_SEND] No teacher found in online users. Aborting.";
             return;
         }
     }
 
-    // 2. 构建元数据 JSON
     QJsonObject metaObj;
     QString typeTag = "";
 
@@ -705,12 +956,13 @@ void client::captureAndSendScreenshot(bool isPeriodic, const QString &violatedAp
     metaObj["type"] = typeTag;
     metaObj["appName"] = violatedAppName;
     metaObj["time"] = QDateTime::currentDateTime().toString(Qt::ISODate);
-    metaObj["studentId"] = QString("%1:%2").arg(m_myIp).arg(m_myUdpPort); 
+    
+    // 【关键修改】使用固定学生 ID 代替 IP:端口
+    metaObj["studentId"] = m_studentId; 
     
     QByteArray jsonData = QJsonDocument(metaObj).toJson(QJsonDocument::Compact);
     QByteArray imageData;
 
-    // 【优化】如果是恢复事件，不需要截图，直接发送空图片数据
     if (typeTag != "STATUS_RECOVERY") {
         QScreen *screen = QGuiApplication::primaryScreen();
         if (screen) {
@@ -727,7 +979,6 @@ void client::captureAndSendScreenshot(bool isPeriodic, const QString &violatedAp
     // 3. 发送数据到教师端
     QTcpSocket *socket = new QTcpSocket(this);
     
-    // 连接超时处理
     QTimer *connectTimer = new QTimer(socket);
     connectTimer->setSingleShot(true);
     connect(connectTimer, &QTimer::timeout, [socket]() {
@@ -741,7 +992,6 @@ void client::captureAndSendScreenshot(bool isPeriodic, const QString &violatedAp
     connect(socket, &QTcpSocket::connected, this, [socket, jsonData, imageData, connectTimer]() {
         connectTimer->stop();
         
-        // 发送头：MONITOR_START|jsonSize|imageSize
         QString headerStr = QString("MONITOR_START|%1|%2").arg(jsonData.size()).arg(imageData.size());
         QByteArray headerData = headerStr.toUtf8();
         
@@ -752,7 +1002,6 @@ void client::captureAndSendScreenshot(bool isPeriodic, const QString &violatedAp
         out.writeRawData(headerData.constData(), headerData.size());
         socket->write(block);
         
-        // 发送 JSON
         QByteArray jsonBlock;
         QDataStream jsonOut(&jsonBlock, QIODevice::WriteOnly);
         jsonOut.setVersion(QDataStream::Qt_5_15);
@@ -760,7 +1009,6 @@ void client::captureAndSendScreenshot(bool isPeriodic, const QString &violatedAp
         jsonOut.writeRawData(jsonData.constData(), jsonData.size());
         socket->write(jsonBlock);
         
-        // 发送图片 (可能为空)
         QByteArray imgBlock;
         QDataStream imgOut(&imgBlock, QIODevice::WriteOnly);
         imgOut.setVersion(QDataStream::Qt_5_15);
@@ -781,16 +1029,8 @@ void client::captureAndSendScreenshot(bool isPeriodic, const QString &violatedAp
     socket->connectToHost(m_currentTargetIp, m_currentTargetPort);
 }
 
-// 【新增】处理来自老师的命令 (在 handlePeerCommand 或专门的 TCP 读取逻辑中)
-// 由于学生端作为 P2P 服务器监听 m_myTcpPort，需要在 handlePeerCommand 中增加解析
-// 注意：原代码中 handlePeerCommand 在 client_p2p.cpp 中，我们需要修改它
-// 这里为了方便，直接在 client_core.cpp 中补充逻辑，或者修改 client_p2p.cpp
-// 鉴于文件结构，最好修改 client_p2p.cpp 来接收这个命令
-
-// 【修复】确保加入班级逻辑完整且 UI 反馈明确
 void client::onJoinClassClicked() {
     QString className = m_classComboBox->currentText().trimmed();
-    // 【修改】增加对 placeholder 的检查，防止用户选择"请选择班级..."这种无效项
     if (className.isEmpty() || className == "请选择班级...") {
         QMessageBox::warning(this, "提示", "请先从列表中选择一个有效的班级！");
         return;
@@ -809,10 +1049,12 @@ void client::onJoinClassClicked() {
     }
 
     // 3. 立即发送心跳包，将班级信息广播给教师端
-    // 心跳包格式：HEARTBEAT|NickName|IsTeacher|IP|UdpPort|TcpPort|ClassName
     sendHeartbeat();
 
-    // 4. 给用户明确的成功反馈
+    // 4. 保存班级到本地配置
+    saveUserSettings();
+
+    // 5. 给用户明确的成功反馈
     QMessageBox::information(this, "加入成功", 
         "已成功加入班级：**" + className + "**\n\n"
         "教师端刷新列表后即可在'班级'列看到该信息。\n"

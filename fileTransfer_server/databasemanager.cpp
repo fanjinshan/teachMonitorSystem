@@ -146,6 +146,29 @@ bool DatabaseManager::createClass(const QString &className) {
     return query.exec();
 }
 
+// 【新增】删除班级
+bool DatabaseManager::deleteClass(const QString &className) {
+    QSqlQuery query;
+    
+    // 1. 从班级表中删除
+    query.prepare("DELETE FROM classes WHERE class_name = ?");
+    query.addBindValue(className);
+    if (!query.exec()) {
+        qDebug() << "[DB] Delete class failed:" << query.lastError().text();
+        return false;
+    }
+
+    // 2. 【可选策略】将该班级下的所有学生班级字段置空
+    query.prepare("UPDATE students SET class_name = '' WHERE class_name = ?");
+    query.addBindValue(className);
+    if (!query.exec()) {
+        qDebug() << "[DB] Clear student class failed:" << query.lastError().text();
+        // 即使这一步失败，班级本身已删除，返回 true 也可接受，但记录日志
+    }
+
+    return true;
+}
+
 // 【新增】获取所有班级
 QList<ClassInfo> DatabaseManager::getAllClasses() {
     QList<ClassInfo> list;
