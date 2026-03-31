@@ -53,17 +53,65 @@ client::client(QWidget *parent) :
     m_currentTargetName(""),
     m_currentPath("/"),
     m_manualTeacherIp(""),
-    m_manualTeacherTcpPort(0)
+    m_manualTeacherTcpPort(0),
+    m_teacherIp("") // 【新增】初始化教师端 IP 为空
 {
     // 初始化本机信息
     QList<QHostAddress> list = QNetworkInterface::allAddresses();
+    bool ipFound = false;
+    
+    // 【修复】优化 IP 选择策略：优先选择常见私有局域网网段，避免选中 VPN 或虚拟网卡 IP
+    QString preferredIp;  // 首选私有网段 IP (192.168, 10, 172.16-31)
+    QString fallbackIp;   // 备用其他 IPv4 地址
+
     for (const QHostAddress &addr : list) {
         if (addr.protocol() == QAbstractSocket::IPv4Protocol && !addr.isLoopback()) {
-            m_myIp = addr.toString();
-            break;
+            QString ipStr = addr.toString();
+            // 跳过 127 开头
+            if (ipStr.startsWith("127.")) continue;
+
+            // 判断是否为常见私有网段
+            bool isPrivate = ipStr.startsWith("192.168.") || 
+                             ipStr.startsWith("10.") || 
+                             (ipStr.startsWith("172.") && [&]() {
+                                 // 检查 172.16.0.0 - 172.31.255.255
+                                 QStringList parts = ipStr.split('.');
+                                 if (parts.size() >= 2) {
+                                     int second = parts[1].toInt();
+                                     return (second >= 16 && second <= 31);
+                                 }
+                                 return false;
+                             }());
+
+            if (isPrivate) {
+                preferredIp = ipStr;
+                break; // 找到首选 IP 立即停止
+            }
+            
+            // 记录一个备用 IP
+            if (fallbackIp.isEmpty()) {
+                fallbackIp = ipStr;
+            }
         }
     }
-    if (m_myIp.isEmpty()) m_myIp = "127.0.0.1";
+
+    // 应用选择结果
+    if (!preferredIp.isEmpty()) {
+        m_myIp = preferredIp;
+        ipFound = true;
+        qDebug() << "[Init] ✅ Selected preferred private IP:" << m_myIp;
+    } else if (!fallbackIp.isEmpty()) {
+        m_myIp = fallbackIp;
+        ipFound = true;
+        qDebug() << "[Init] ⚠️ No private IP found, using fallback:" << m_myIp;
+    }
+
+    if (!ipFound || m_myIp.isEmpty()) {
+        m_myIp = "127.0.0.1";
+        qWarning() << "[Init] ⚠️ Failed to obtain valid non-loopback IP, fallback to localhost.";
+    } else {
+        qDebug() << "[Init] ✅ Local IP obtained:" << m_myIp;
+    }
 
     // 初始化自定义 UI
     initUi();
@@ -94,6 +142,8 @@ client::client(QWidget *parent) :
     }
 
     m_myTcpPort = 20000 + QRandomGenerator::global()->bounded(10000);
+    qDebug() << "[Init] Local TCP Port generated:" << m_myTcpPort;
+    
     m_sharedDirPath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/MyShare";
     QDir().mkpath(m_sharedDirPath);
 
@@ -299,10 +349,21 @@ void client::sendHeartbeat()
                   .arg(m_studentId); // 发送固定 ID
     
     QByteArray data = msg.toUtf8();
-    qint64 bytesSent = m_udpSocket->writeDatagram(data, QHostAddress::Broadcast, DEFAULT_TEACHER_UDP_PORT);
+    QHostAddress targetAddr;
+    
+    // 【核心修改】如果已知教师端 IP，优先使用单播发送心跳，绕过广播可能被防火墙拦截的问题
+    if (!m_teacherIp.isEmpty()) {
+        targetAddr = QHostAddress(m_teacherIp);
+        qDebug() << "[UDP] Sending UNICAST heartbeat to teacher:" << m_teacherIp;
+    } else {
+        targetAddr = QHostAddress::Broadcast;
+        qDebug() << "[UDP] Sending BROADCAST heartbeat (teacher IP unknown)";
+    }
+    
+    qint64 bytesSent = m_udpSocket->writeDatagram(data, targetAddr, DEFAULT_TEACHER_UDP_PORT);
     
     if (bytesSent == -1) {
-        qDebug() << "[UDP Error] Failed to send heartbeat to Broadcast:" << m_udpSocket->errorString();
+        qDebug() << "[UDP Error] Failed to send heartbeat to" << targetAddr.toString() << ":" << m_udpSocket->errorString();
     }
 }
 
@@ -353,6 +414,12 @@ void client::onUdpReadyRead()
                         m_onlineUsers[user.id] = user;
                         currentVisibleIds.insert(user.id);
                         updateUserList(user);
+                        
+                        // 【新增】如果是教师端，记录其 IP 用于单播心跳
+                        if (user.isTeacher && m_teacherIp.isEmpty()) {
+                            m_teacherIp = user.ip;
+                            qDebug() << "[UDP Discovery] Teacher found via USER_LIST, recording IP:" << m_teacherIp;
+                        }
                     }
                 }
 
@@ -426,6 +493,12 @@ void client::onUdpReadyRead()
                         m_onlineUsers[user.id] = user;
                         currentVisibleIds.insert(user.id);
                         updateUserList(user);
+                        
+                        // 【新增】兼容旧协议格式的用户列表解析
+                        if (user.isTeacher && m_teacherIp.isEmpty()) {
+                            m_teacherIp = user.ip;
+                            qDebug() << "[UDP Discovery] Teacher found via legacy USER_LIST, recording IP:" << m_teacherIp;
+                        }
                     }
                 } else {
                     qDebug() << "[UDP Error] Failed to parse USER_LIST JSON:" << error.errorString();
@@ -458,7 +531,10 @@ void client::onUdpReadyRead()
                     m_currentTargetIp = ip;
                     m_currentTargetPort = tPort;
                     m_currentTargetName = nick;
-                    qDebug() << "[Heartbeat] Updated teacher target to" << ip << ":" << tPort << "(" << nick << ")";
+                    
+                    // 【新增】收到教师心跳时，记录其 IP
+                    m_teacherIp = ip;
+                    qDebug() << "[Heartbeat] Updated teacher target and recorded IP for unicast:" << ip << ":" << tPort;
                 }
             }
         }
@@ -932,7 +1008,10 @@ void client::captureAndSendScreenshot(bool isPeriodic, const QString &violatedAp
                 m_currentTargetPort = it->tcpPort; 
                 m_currentTargetName = it->nickName;
                 found = true;
-                qDebug() << "[SCREENSHOT_SEND] Found teacher:" << it->nickName << "at" << it->ip << ":" << it->tcpPort;
+                
+                // 【新增】找到教师时记录 IP
+                m_teacherIp = it->ip;
+                qDebug() << "[SCREENSHOT_SEND] Found teacher:" << it->nickName << "at" << it->ip << ":" << it->tcpPort << ", recorded for unicast.";
                 break;
             }
         }
@@ -959,6 +1038,11 @@ void client::captureAndSendScreenshot(bool isPeriodic, const QString &violatedAp
     
     // 【关键修改】使用固定学生 ID 代替 IP:端口
     metaObj["studentId"] = m_studentId; 
+    
+    // 【新增】在 TCP 数据包中携带昵称、班级和 TCP 端口，作为 UDP 心跳丢失时的备用信息源
+    metaObj["nickName"] = m_myNickName;
+    metaObj["className"] = m_currentClassName;
+    metaObj["tcpPort"] = m_myTcpPort;   // 【修复】新增 tcpPort 字段，供教师端补录
     
     QByteArray jsonData = QJsonDocument(metaObj).toJson(QJsonDocument::Compact);
     QByteArray imageData;
@@ -1027,6 +1111,108 @@ void client::captureAndSendScreenshot(bool isPeriodic, const QString &violatedAp
     });
 
     socket->connectToHost(m_currentTargetIp, m_currentTargetPort);
+}
+
+void client::onFriendListItemDoubleClicked(QListWidgetItem *item)
+{
+    QString userId = item->data(Qt::UserRole).toString();
+    UserInfo user = m_onlineUsers.value(userId);
+    
+    if (user.isTeacher) {
+        m_currentTargetIp = user.ip;
+        m_currentTargetPort = user.tcpPort;
+        m_currentTargetName = user.nickName;
+        m_manualTeacherIp = ""; 
+        
+        // 【新增】记录教师端 IP，用于后续 UDP 单播心跳
+        m_teacherIp = user.ip;
+        qDebug() << "[Discovery] Teacher IP recorded for unicast heartbeat:" << m_teacherIp;
+
+        m_navList->setCurrentRow(1); 
+        onRefreshClicked(); 
+    } else {
+        QMessageBox::information(this, "提示", "只能选择教师端进行连接。");
+    }
+}
+
+void client::onRefreshClicked()
+{
+    qDebug() << "[Action] Refresh clicked. Checking teacher status...";
+    
+    // 【优化】如果是手动连接模式，直接连接，不发送心跳等待
+    if (!m_manualTeacherIp.isEmpty()) {
+        qDebug() << "[Manual Mode] Skipping UDP discovery, connecting directly to:" << m_manualTeacherIp;
+        m_fileTree->clear();
+        QTreeWidgetItem *loadingItem = new QTreeWidgetItem(m_fileTree);
+        loadingItem->setText(0, "正在连接指定教师端 (" + m_manualTeacherIp + ")...");
+        
+        // 【新增】手动连接时也记录教师 IP
+        m_teacherIp = m_manualTeacherIp;
+        
+        tryDirectConnect(m_manualTeacherIp, m_manualTeacherTcpPort);
+        return;
+    }
+
+    // 【优化】先发送心跳，然后仅在没有目标 IP 时才短暂等待发现
+    sendHeartbeat();
+
+    // 如果已经有目标 IP（说明之前已经成功发现或连接过），立即刷新，不等待
+    if (!m_currentTargetIp.isEmpty()) {
+        m_fileTree->clear();
+        QTreeWidgetItem *loadingItem = new QTreeWidgetItem(m_fileTree);
+        loadingItem->setText(0, "正在刷新文件列表...");
+        requestFileList(m_currentTargetIp, m_currentTargetPort, m_currentPath);
+        return;
+    }
+
+    // 只有在完全没有目标 IP 时，才等待一小段时间尝试通过 UDP 发现教师
+    // 将等待时间从 800ms 缩短为 300ms，加快响应速度
+    QTimer::singleShot(300, this, [this]() {
+        if (!checkTeacherOnline()) {
+            qDebug() << "[Warning] No teacher detected after retry via UDP.";
+            m_fileTree->clear();
+            
+            QTreeWidgetItem *tipItem = new QTreeWidgetItem(m_fileTree);
+            tipItem->setText(0, "未检测到在线教师端。\n\n可能原因：\n1. 教师端未启动或防火墙拦截。\n2. 网络不在同一网段。\n\n当前配置:\n- 学生监听端口：" + QString::number(DEFAULT_STUDENT_START_PORT) + "\n- 教师广播目标端口：" + QString::number(DEFAULT_STUDENT_START_PORT) + "\n- 教师监听端口：" + QString::number(DEFAULT_TEACHER_UDP_PORT));
+            tipItem->setForeground(0, Qt::red);
+            tipItem->setFont(0, QFont("Microsoft YaHei", 11));
+            
+            QTreeWidgetItem *debugItem = new QTreeWidgetItem(m_fileTree);
+            debugItem->setText(0, QString("调试信息:\n- 本机 UDP 端口：%1 (标准:%2)\n- 广播目标端口：%3\n- 在线用户数：%4")
+                               .arg(m_myUdpPort).arg(DEFAULT_STUDENT_START_PORT)
+                               .arg(DEFAULT_TEACHER_UDP_PORT)
+                               .arg(m_onlineUsers.size()));
+            debugItem->setForeground(0, Qt::darkGray);
+            debugItem->setFont(0, QFont("Consolas", 10));
+            
+            return;
+        }
+
+        m_fileTree->clear();
+        QTreeWidgetItem *loadingItem = new QTreeWidgetItem(m_fileTree);
+        loadingItem->setText(0, "正在加载文件列表...");
+        
+        if (m_currentTargetIp.isEmpty()) {
+            for (auto it = m_onlineUsers.begin(); it != m_onlineUsers.end(); ++it) {
+                if (it->isTeacher) {
+                    m_currentTargetIp = it->ip;
+                    m_currentTargetPort = it->tcpPort;
+                    m_currentTargetName = it->nickName;
+                    
+                    // 【新增】通过列表发现教师时也记录 IP
+                    m_teacherIp = it->ip;
+                    break;
+                }
+            }
+        }
+
+        if (m_currentTargetIp.isEmpty()) {
+             loadingItem->setText(0, "错误：未找到目标教师 IP");
+             return;
+        }
+
+        requestFileList(m_currentTargetIp, m_currentTargetPort, m_currentPath);
+    });
 }
 
 void client::onJoinClassClicked() {

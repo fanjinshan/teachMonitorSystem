@@ -67,9 +67,27 @@ ServerWindow::ServerWindow(QWidget *parent)
     m_myTcpPort = 20000 + QRandomGenerator::global()->bounded(10000);
 
     // 初始化数据库
+    // 初始化数据库
     if (!DatabaseManager::instance().init()) {
         QMessageBox::critical(this, "错误", "数据库初始化失败！");
     }
+
+    // 【新增】启动前从数据库预加载所有学生信息到 g_onlineUsers
+    // 目的：确保即使学生当前未发心跳，表格也能显示其历史班级和名称，避免显示“未知”
+    QMap<QString, StudentInfo> allStudents = DatabaseManager::instance().getAllStudents();
+    for (auto it = allStudents.begin(); it != allStudents.end(); ++it) {
+        UserInfo user;
+        user.id = it.key();
+        user.nickName = it->name;
+        user.ip = it->ip;
+        user.className = it->className;
+        user.isTeacher = false;
+        user.port = 0;
+        user.tcpPort = 0;
+        user.lastHeartbeat = 0; // 标记为离线/未知状态
+        g_onlineUsers[it.key()] = user;
+    }
+    qDebug() << "[Init] Pre-loaded" << allStudents.size() << "students from database.";
 
     setupMainLayout();
 
@@ -114,8 +132,11 @@ ServerWindow::ServerWindow(QWidget *parent)
     onLogMessage("系统就绪，等待学生上线...");
     
     // 【新增】初始化班级列表
-    m_currentFilterClass = "全部班级"; // 【修复】初始化筛选状态
-    refreshMonitorTable(); // 初始加载所有学生
+    // 【修复】显式初始化筛选状态为"全部班级"，防止默认值为空字符串导致逻辑歧义
+    m_currentFilterClass = "全部班级"; 
+    
+    // 【修复】初始加载所有学生，并传入明确的筛选条件
+    refreshMonitorTable("全部班级"); 
 }
 
 void ServerWindow::setupMainLayout() {
@@ -203,6 +224,9 @@ void ServerWindow::setupMonitorPage() {
     connect(m_classFilterCombo, QOverload<const QString &>::of(&QComboBox::currentTextChanged), 
             this, &ServerWindow::onClassComboBoxChanged);
     topBar->addWidget(m_classFilterCombo);
+
+    // 【新增】确保初始状态选中“全部班级”
+    m_classFilterCombo->setCurrentIndex(0);
 
     // 【新增】查看班级按钮（也可通过下拉框直接触发，此处保留按钮作为快捷操作或刷新）
     btnViewClass = new QPushButton("刷新班级视图");
@@ -422,12 +446,16 @@ void ServerWindow::onLogMessage(const QString &msg) {
     }
 }
 
-// 【修改】更新表格行逻辑，适配 7 列结构，并增加筛选逻辑检查
+// 【修改】更新表格行逻辑，增加详细调试日志和严格的筛选检查
 void ServerWindow::updateStudentTableRow(const QString &id, const QString &name, StudentStatus status, const QString &app, const QByteArray &screenshot) {
-    // 【修复】消除未使用参数警告
     Q_UNUSED(screenshot);
 
-    // 【核心修复】1. 获取学生当前最新的班级信息
+    // 【调试】打印入口参数
+    qDebug() << "[updateStudentTableRow] ENTER -> id:" << id << "name:" << name
+             << "status:" << (int)status << "app:" << app
+             << "m_currentFilterClass:" << m_currentFilterClass;
+
+    // 1. 获取学生当前最新的班级信息
     QString studentClass = "未分班";
     if (g_onlineUsers.contains(id) && !g_onlineUsers[id].className.isEmpty()) {
         studentClass = g_onlineUsers[id].className;
@@ -438,7 +466,7 @@ void ServerWindow::updateStudentTableRow(const QString &id, const QString &name,
         }
     }
 
-    // 【新增】2. 获取学生 IP 地址
+    // 2. 获取学生 IP 地址
     QString studentIp;
     if (g_onlineUsers.contains(id) && !g_onlineUsers[id].ip.isEmpty()) {
         studentIp = g_onlineUsers[id].ip;
@@ -452,8 +480,13 @@ void ServerWindow::updateStudentTableRow(const QString &id, const QString &name,
         studentIp = "未知 IP";
     }
 
-    // 【核心修复】3. 筛选检查：如果当前不是“全部班级”，且学生班级不匹配，则隐藏该学生
-    if (m_currentFilterClass != "全部班级" && studentClass != m_currentFilterClass) {
+    qDebug() << "[updateStudentTableRow] Resolved -> IP:" << studentIp << "Class:" << studentClass;
+
+    // 3. 【核心修复】筛选检查：增加对空字符串的判断，空字符串视为“全部班级”
+    // 只有当筛选条件不为空 且 不为"全部班级" 且 学生班级不匹配时，才进行过滤
+    if (!m_currentFilterClass.isEmpty() && m_currentFilterClass != "全部班级" && studentClass != m_currentFilterClass) {
+        qDebug() << "[Filter] MISMATCH! Student class ('" << studentClass << "') != Filter ('" << m_currentFilterClass << "'). Removing/Hiding row for" << id;
+        
         // 如果该行已存在，则删除它（因为切换了筛选条件，该学生不应再显示）
         if (m_studentRowMap.contains(id)) {
             int row = m_studentRowMap.take(id);
@@ -462,30 +495,33 @@ void ServerWindow::updateStudentTableRow(const QString &id, const QString &name,
             for (auto it = m_studentRowMap.begin(); it != m_studentRowMap.end(); ++it) {
                 if (it.value() > row) it.value()--;
             }
-            qDebug() << "[Filter] Removed student" << name << "(" << id << ") class:" << studentClass << "because filter is:" << m_currentFilterClass;
+            qDebug() << "[Filter] Removed existing row" << row << "for student" << name;
         } else {
-            // 如果该行不存在，且不符合筛选条件，则直接返回，不创建新行（防止心跳包把不该显示的学生加回来）
-            qDebug() << "[Filter] Ignored adding student" << name << "(" << id << ") class:" << studentClass << "because filter is:" << m_currentFilterClass;
+            qDebug() << "[Filter] Ignored adding new row for" << name << "due to filter mismatch.";
         }
         return; 
     }
+
+    qDebug() << "[Filter] PASS. Proceeding to add/update row for" << id;
 
     // 4. 原有逻辑：添加或更新行
     int row = -1;
     if (m_studentRowMap.contains(id)) {
         row = m_studentRowMap[id];
+        qDebug() << "[UI] Updating existing row" << row << "for" << id;
+        
         QTableWidgetItem *nameItem = m_monitorTable->item(row, 1);
         if (nameItem && nameItem->text() != name) {
             nameItem->setText(name);
         }
         
-        // 【新增】更新 IP 列（第 0 列）显示
+        // 更新 IP 列
         QTableWidgetItem *ipItem = m_monitorTable->item(row, 0);
         if (ipItem && ipItem->text() != studentIp) {
             ipItem->setText(studentIp);
         }
 
-        // 【优化】如果班级列发生变化，也更新班级列
+        // 更新班级列
         QTableWidgetItem *classItem = m_monitorTable->item(row, 2);
         if (classItem && classItem->text() != studentClass) {
             classItem->setText(studentClass);
@@ -494,8 +530,9 @@ void ServerWindow::updateStudentTableRow(const QString &id, const QString &name,
         row = m_monitorTable->rowCount();
         m_monitorTable->insertRow(row);
         m_studentRowMap[id] = row;
+        qDebug() << "[UI] Created NEW row" << row << "for" << id;
         
-        // 【关键修改】第 0 列：显示 IP，但在 UserRole 中存储固定 ID 供后续操作使用
+        // 第 0 列：显示 IP，UserRole 存 ID
         QTableWidgetItem *ipItem = new QTableWidgetItem(studentIp);
         ipItem->setData(Qt::UserRole, id); 
         m_monitorTable->setItem(row, 0, ipItem);
@@ -534,12 +571,10 @@ void ServerWindow::updateStudentTableRow(const QString &id, const QString &name,
             break;
     }
     
-    // 第 3 列：状态
     m_monitorTable->setItem(row, 3, statusItem);
-    // 第 4 列：违规应用
     m_monitorTable->setItem(row, 4, appItem);
 
-    // 第 5 列：违规次数 (独立显示)
+    // 第 5 列：违规次数
     int count = DatabaseManager::instance().getViolationCount(id);
     QTableWidgetItem *countItem = new QTableWidgetItem(QString::number(count));
     countItem->setTextAlignment(Qt::AlignCenter);
@@ -551,26 +586,22 @@ void ServerWindow::updateStudentTableRow(const QString &id, const QString &name,
     }
     m_monitorTable->setItem(row, 5, countItem);
 
-    // 第 6 列：查看屏幕 (高亮处理 - 增强版)
+    // 第 6 列：查看屏幕
     QTableWidgetItem *actionItem = new QTableWidgetItem("🔍 查看屏幕");
-    
-    // 【修改】设置更突出的样式：鲜艳背景 + 深蓝字 + 加粗下划线 + 居中
-    QColor bgColor("#e3f2fd"); // 更明显的浅蓝色背景
-    QColor textColor("#0d47a1"); // 深蓝色文字，对比度更高
-    
+    QColor bgColor("#e3f2fd");
+    QColor textColor("#0d47a1");
     actionItem->setBackground(QBrush(bgColor));
     actionItem->setForeground(QBrush(textColor));
-    
     QFont actionFont = actionItem->font();
-    actionFont.setBold(true);      // 加粗
-    actionFont.setUnderline(true); // 下划线
-    actionFont.setPointSize(actionFont.pointSize() + 1); // 字号稍大一点
+    actionFont.setBold(true);
+    actionFont.setUnderline(true);
+    actionFont.setPointSize(actionFont.pointSize() + 1);
     actionItem->setFont(actionFont);
-    
-    actionItem->setTextAlignment(Qt::AlignCenter); // 强制居中
-    actionItem->setToolTip("双击此行或点击此按钮查看实时屏幕"); // 明确提示
-    
+    actionItem->setTextAlignment(Qt::AlignCenter);
+    actionItem->setToolTip("双击此行或点击此按钮查看实时屏幕");
     m_monitorTable->setItem(row, 6, actionItem);
+
+    qDebug() << "[updateStudentTableRow] SUCCESS. Row" << row << "updated for" << id << "with Class:" << studentClass;
 }
 
 void ServerWindow::onStudentStatusUpdated(const QString &id, StudentStatus status, const QString &appName, const QByteArray &screenshot) {
@@ -673,7 +704,15 @@ void ServerWindow::onStudentStatusUpdated(const QString &id, StudentStatus statu
 
 // 【新增】刷新监控表格，支持按班级过滤
 void ServerWindow::refreshMonitorTable(const QString &filterClass) {
-    m_currentFilterClass = filterClass; // 【修复】确保成员变量与参数一致
+    // 【修复】处理空字符串情况，视为“全部班级”
+    QString effectiveFilter = filterClass;
+    if (effectiveFilter.isEmpty()) {
+        effectiveFilter = "全部班级";
+    }
+    m_currentFilterClass = effectiveFilter;
+    
+    qDebug() << "[Refresh] Starting table refresh. Filter set to:'" << m_currentFilterClass << "'";
+    
     m_monitorTable->setRowCount(0);
     m_studentRowMap.clear();
     
@@ -686,42 +725,50 @@ void ServerWindow::refreshMonitorTable(const QString &filterClass) {
         if (g_onlineUsers.contains(stu.id)) {
             const UserInfo &onlineUser = g_onlineUsers[stu.id];
             stu.isOnline = true;
-            stu.className = onlineUser.className; 
+            // 优先使用心跳包中的最新班级信息
+            if (!onlineUser.className.isEmpty()) {
+                stu.className = onlineUser.className;
+            }
         } else {
             stu.isOnline = false;
         }
     }
 
-    // 调试日志
-    qDebug() << "[Refresh] Preparing to filter. Target Class:" << filterClass;
+    // 调试日志：打印所有待处理学生
+    qDebug() << "[Refresh] Total students in DB:" << allStudents.size();
     for (const auto &stu : allStudents) {
         qDebug() << "  [Student]" << stu.name << "(" << stu.id << ") Online:" << stu.isOnline << "Class:'" << stu.className << "'";
     }
 
     // 第三步：根据筛选条件过滤
-    if (!filterClass.isEmpty() && filterClass != "全部班级") {
+    if (!m_currentFilterClass.isEmpty() && m_currentFilterClass != "全部班级") {
         QList<StudentInfo> filtered;
-        QString targetClass = filterClass.trimmed();
+        QString targetClass = m_currentFilterClass.trimmed();
         
         for (const StudentInfo &stu : allStudents) {
+            // 严格匹配：学生班级不为空 且 等于目标班级
             if (!stu.className.trimmed().isEmpty() && stu.className.trimmed() == targetClass) {
                 filtered.append(stu);
+            } else {
+                qDebug() << "[Refresh] Filtering OUT student" << stu.name << "because class'" << stu.className << "'!='"<< targetClass << "'";
             }
         }
         
         qDebug() << "[Refresh] Filtered count:" << filtered.size() << "for class:" << targetClass;
         allStudents = filtered;
     } else {
-        qDebug() << "[Refresh] Showing all classes (no filter or 'All Classes' selected).";
+        qDebug() << "[Refresh] Showing all classes (Filter is 'All Classes' or empty).";
     }
     
     // 第四步：更新表格
     for (const StudentInfo &stu : allStudents) {
         StudentStatus status = stu.isOnline ? StudentStatus::Online_Normal : StudentStatus::Offline;
+        // 注意：这里传入空的 app 和 screenshot，只更新基础信息和状态
         updateStudentTableRow(stu.id, stu.name, status, "", QByteArray());
     }
     
     updateOnlineStats();
+    qDebug() << "[Refresh] Table refresh completed.";
 }
 
 void ServerWindow::updateOnlineStats() {
@@ -835,11 +882,23 @@ void ServerWindow::onUdpReadyRead()
             
             if (isTeacher) continue; 
 
+            // 【修复】获取 IP 并增加容错逻辑
             QString ip = parts[3];
+            if (ip.isEmpty() || ip == "127.0.0.1" || ip.startsWith("127.")) {
+                qDebug() << "[UDP] ⚠️ Heartbeat IP invalid ('" << ip << "'), using UDP sender IP:" << senderIp.toString();
+                ip = senderIp.toString();
+            }
+            
             quint16 uPort = parts[4].toUShort();
             quint16 tPort = parts[5].toUShort();
 
-            // 解析班级信息 (第 7 个部分，索引为 6)
+            if (tPort == 0) {
+                qWarning() << "[UDP] ⚠️ Received heartbeat with TCP Port 0 from" << nick << "(" << ip << "). Screen view may fail.";
+            } else {
+                qDebug() << "[UDP] ✅ Valid Heartbeat from" << nick << "- IP:" << ip << "TCP Port:" << tPort;
+            }
+
+            // 解析班级信息
             QString className = "";
             if (parts.size() >= 7) {
                 className = parts[6].trimmed();
@@ -851,14 +910,13 @@ void ServerWindow::onUdpReadyRead()
                 qDebug() << "[Heartbeat] Student" << nick << "heartbeat missing class field.";
             }
 
-            // 【关键修改】获取固定学生 ID（第 8 个部分，索引为 7）
+            // 获取固定学生 ID
             QString studentId = "";
             if (parts.size() >= 8) {
                 studentId = parts[7].trimmed();
                 qDebug() << "[Heartbeat] Received fixed StudentId:" << studentId;
             }
             
-            // 【兼容旧版】如果没有固定 ID，则使用 IP:端口 作为 ID
             if (studentId.isEmpty()) {
                 studentId = QString("%1:%2").arg(ip).arg(uPort);
                 qDebug() << "[Heartbeat] No fixed ID found, using fallback ID:" << studentId;
@@ -868,7 +926,7 @@ void ServerWindow::onUdpReadyRead()
             user.ip = ip;
             user.port = uPort;
             user.tcpPort = tPort;
-            user.id = studentId;          // 【关键】使用固定 ID 作为键
+            user.id = studentId;
             user.nickName = nick; 
             user.isTeacher = isTeacher;
             user.lastHeartbeat = QDateTime::currentMSecsSinceEpoch();
@@ -876,15 +934,20 @@ void ServerWindow::onUdpReadyRead()
 
             bool isNewUser = !g_onlineUsers.contains(studentId);
             
+            // 【调试】打印旧班级信息以便对比
             if (!isNewUser) {
-                if (g_onlineUsers[studentId].nickName != nick) {
-                    onLogMessage(QString("[同步] 学生 %1 昵称更新：%2 -> %3").arg(studentId, g_onlineUsers[studentId].nickName, nick));
-                }
-                if (g_onlineUsers[studentId].className != className) {
-                     qDebug() << "[Sync] Student" << studentId << "class changed from" << g_onlineUsers[studentId].className << "to" << className;
+                QString oldClass = g_onlineUsers[studentId].className;
+                QString oldNick = g_onlineUsers[studentId].nickName;
+                QString oldIp = g_onlineUsers[studentId].ip;
+                
+                if (oldClass != className || oldNick != nick || oldIp != ip) {
+                    qDebug() << "[Sync] Student" << studentId << "info changed -> Nick:" << oldNick << "->" << nick 
+                             << ", Class:" << oldClass << "->" << className 
+                             << ", IP:" << oldIp << "->" << ip;
                 }
             } else {
                 userListChanged = true;
+                qDebug() << "[Sync] New student detected:" << studentId << "(" << nick << ") Class:" << className;
             }
 
             g_onlineUsers[studentId] = user;
@@ -907,7 +970,7 @@ void ServerWindow::onUdpReadyRead()
                 }
             }
 
-            // 直接更新 UI 表格
+            // 【核心修复】无论是否为新用户，只要行存在，就强制更新显示内容（特别是班级和 IP）
             if (m_studentRowMap.contains(studentId)) {
                 int row = m_studentRowMap[studentId];
                 
@@ -915,25 +978,45 @@ void ServerWindow::onUdpReadyRead()
                 QTableWidgetItem *nameItem = m_monitorTable->item(row, 1);
                 if (nameItem && nameItem->text() != nick) {
                     nameItem->setText(nick);
-                    DatabaseManager::instance().registerStudent(studentId, nick, ip);
+                    // 如果昵称变了，也同步更新数据库
+                    if (info.name != nick) {
+                         DatabaseManager::instance().registerStudent(studentId, nick, ip);
+                    }
+                    qDebug() << "[UI] Updated name for" << studentId << "to" << nick;
                 }
 
-                // 2. 更新班级列
+                // 2. 强制更新班级列 (解决不同步问题的关键)
                 QTableWidgetItem *classItem = m_monitorTable->item(row, 2);
                 if (classItem) {
                     QString displayClass = className.isEmpty() ? "未分班" : className;
                     if (classItem->text() != displayClass) {
                         classItem->setText(displayClass);
+                        qDebug() << "[UI] Forced update class for" << studentId << "to" << displayClass << "(Was:" << classItem->text() << ")";
                     }
                 }
+
+                // 3. 强制更新 IP 列
+                QTableWidgetItem *ipItem = m_monitorTable->item(row, 0);
+                if (ipItem && ipItem->text() != ip) {
+                    ipItem->setText(ip);
+                    qDebug() << "[UI] Forced update IP for" << studentId << "to" << ip;
+                }
                 
-                onLogMessage(QString("[UI] 已即时更新学生 %1 的昵称和班级显示").arg(studentId));
+                // 【调试】检查当前筛选条件，确认该行是否应该可见
+                qDebug() << "[Debug] Row" << row << "exists for" << studentId 
+                         << ". CurrentFilter:" << m_currentFilterClass 
+                         << ". StudentClass:" << (className.isEmpty() ? "未分班" : className);
+                         
+                // 注意：这里不再调用 updateStudentTableRow 来避免潜在的过滤逻辑干扰，
+                // 而是直接修改单元格文本。如果筛选条件导致该行本应被删除，
+                // 那么在下一次 refreshMonitorTable 或状态变更时会处理。
+                // 但如果只是班级变了，而筛选是"全部班级"或匹配的班级，直接更新是最安全的。
+                
             } else {
                 // 新用户，创建行
+                qDebug() << "[UI] Adding new row for student:" << studentId << "Class:" << className;
                 updateStudentTableRow(studentId, displayName, StudentStatus::Online_Normal, "", QByteArray());
             }
-            
-            onLogMessage(QString("[UI] 已更新学生 %1 的显示昵称为：%2").arg(studentId, displayName));
         }
     }
 
@@ -1135,15 +1218,86 @@ void ServerWindow::onNewFileConnection()
                             QString type = obj["type"].toString();
                             QString timeStr = obj["time"].toString();
 
-                            QString displayName;
-                            if (g_onlineUsers.contains(studentId)) {
-                                displayName = g_onlineUsers[studentId].nickName;
-                            } else {
-                                StudentInfo info = DatabaseManager::instance().getStudentInfo(studentId);
-                                displayName = info.name.isEmpty() ? ("学生_" + studentId.split(':').last()) : info.name;
+                            // 【新增】从 TCP 包中提取备用信息 (昵称、班级、TCP 端口)
+                            QString reportedNick = obj["nickName"].toString();
+                            QString reportedClass = obj["className"].toString();
+                            quint16 reportedTcpPort = 0;
+                            if (obj.contains("tcpPort")) {
+                                reportedTcpPort = static_cast<quint16>(obj["tcpPort"].toInt());
                             }
 
-                            qint64 now = QDateTime::currentMSecsSinceEpoch();
+                            // 【新增】从 Socket 获取对端 IP (处理 IPv6 映射)
+                            QString peerIp = socket->peerAddress().toString();
+                            if (peerIp.startsWith("::ffff:")) {
+                                peerIp = peerIp.mid(7);
+                            }
+
+                            QString displayName;
+                            qint64 now = QDateTime::currentMSecsSinceEpoch(); // 【新增】获取当前时间戳
+
+                            // 【核心修复】如果 g_onlineUsers 中没有该学生，利用 TCP 信息创建临时记录
+                            if (!g_onlineUsers.contains(studentId)) {
+                                UserInfo tempUser;
+                                tempUser.id = studentId;
+                                tempUser.ip = peerIp; // 使用 TCP 源 IP
+                                tempUser.tcpPort = reportedTcpPort; // 【修复】使用上报的 TCP 端口
+                                tempUser.port = 0;
+                                tempUser.nickName = reportedNick.isEmpty() ? ("未知_" + studentId.right(4)) : reportedNick;
+                                tempUser.className = reportedClass;
+                                tempUser.isTeacher = false;
+                                tempUser.lastHeartbeat = now; // 【关键修复】初始化心跳时间为当前时间，防止立即被清理
+                                
+                                g_onlineUsers[studentId] = tempUser;
+                                
+                                // 同步到数据库
+                                StudentInfo dbInfo = DatabaseManager::instance().getStudentInfo(studentId);
+                                if (dbInfo.id.isEmpty()) {
+                                    DatabaseManager::instance().registerStudent(studentId, tempUser.nickName, peerIp);
+                                    if (!reportedClass.isEmpty()) {
+                                        DatabaseManager::instance().updateStudentClass(studentId, reportedClass);
+                                    }
+                                    onLogMessage(QString("[TCP 补录] 新学生注册：%1 (IP:%2, 班级:%3, TCP 端口:%4)").arg(tempUser.nickName, peerIp, reportedClass).arg(reportedTcpPort));
+                                } else {
+                                    // 更新现有记录的 IP、班级和端口
+                                    DatabaseManager::instance().registerStudent(studentId, dbInfo.name, peerIp);
+                                    if (!reportedClass.isEmpty() && dbInfo.className != reportedClass) {
+                                        DatabaseManager::instance().updateStudentClass(studentId, reportedClass);
+                                    }
+                                    onLogMessage(QString("[TCP 补录] 更新学生 %1 信息 (IP:%2, 班级:%3, TCP 端口:%4)").arg(dbInfo.name, peerIp, reportedClass).arg(reportedTcpPort));
+                                }
+                                
+                                displayName = tempUser.nickName;
+                            } else {
+                                if (g_onlineUsers.contains(studentId)) {
+                                    displayName = g_onlineUsers[studentId].nickName;
+                                    
+                                    // 【关键修复】无论是否有信息变化，只要收到 TCP 包，就更新 lastHeartbeat
+                                    // 这能防止因 UDP 心跳丢失导致学生被超时清理机制移除
+                                    g_onlineUsers[studentId].lastHeartbeat = now;
+                                    
+                                    // 【修复】即使学生已存在，也要更新可能缺失或变化的 TCP 端口
+                                    if (reportedTcpPort != 0 && g_onlineUsers[studentId].tcpPort != reportedTcpPort) {
+                                        g_onlineUsers[studentId].tcpPort = reportedTcpPort;
+                                        qDebug() << "[TCP 补录] 更新在线学生" << studentId << "的 TCP 端口为:" << reportedTcpPort;
+                                    }
+                                    
+                                    // 如果 TCP 包里有更新的班级信息，也尝试更新
+                                    if (!reportedClass.isEmpty() && g_onlineUsers[studentId].className != reportedClass) {
+                                        g_onlineUsers[studentId].className = reportedClass;
+                                        DatabaseManager::instance().updateStudentClass(studentId, reportedClass);
+                                    }
+                                    // 如果之前 IP 为空，现在补上
+                                    if (g_onlineUsers[studentId].ip.isEmpty() && !peerIp.isEmpty()) {
+                                        g_onlineUsers[studentId].ip = peerIp;
+                                    }
+                                    // 更新昵称
+                                    if (!reportedNick.isEmpty() && g_onlineUsers[studentId].nickName != reportedNick) {
+                                        g_onlineUsers[studentId].nickName = reportedNick;
+                                    }
+                                } else {
+                                    displayName = "未知学生";
+                                }
+                            }
 
                             if (type == "STATUS_RECOVERY") {
                                 m_lastRecoverTime[studentId] = now;
@@ -1189,6 +1343,8 @@ void ServerWindow::onNewFileConnection()
                                 if (!ctx->imgBuffer.isEmpty()) {
                                     DatabaseManager::instance().insertMonitorRecord(studentId, "Periodic_Monitor", "定期巡查", ctx->imgBuffer);
                                 }
+                                // 【新增】定期巡查也刷新表格，确保学生可见（状态设为正常）
+                                updateStudentTableRow(studentId, displayName, StudentStatus::Online_Normal, "", QByteArray());
                             }
                         }
                         
@@ -1705,6 +1861,11 @@ void ServerWindow::onViewClassMembersClicked() {
 }
 
 void ServerWindow::onClassComboBoxChanged(const QString &className) {
-    m_currentFilterClass = className; // 【修复】同步更新筛选状态
-    refreshMonitorTable(className);
+    // 【修复】如果下拉框返回空字符串，强制设置为“全部班级”
+    if (className.isEmpty()) {
+        m_currentFilterClass = "全部班级";
+    } else {
+        m_currentFilterClass = className;
+    }
+    refreshMonitorTable(m_currentFilterClass);
 }

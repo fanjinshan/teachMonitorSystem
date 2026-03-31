@@ -288,6 +288,9 @@ private:
     QString m_manualTeacherIp;
     quint16 m_manualTeacherTcpPort;
 
+    // 【新增】记录教师端 IP，用于 UDP 单播心跳，解决广播被防火墙拦截问题
+    QString m_teacherIp;
+
     // 【新增】班级信息
     QString m_currentClassName;
     QComboBox *m_classComboBox;      // 设置页班级选择框
