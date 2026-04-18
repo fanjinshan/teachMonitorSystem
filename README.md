@@ -29,15 +29,15 @@
 ---
 
 ### 核心功能截图
-#### 学生端共享文件夹界面
+学生端共享文件夹界面
 <img width="1202" height="682" alt="学生端共享文件夹" src="https://github.com/user-attachments/assets/7f640796-4e7f-4ec4-bec7-40f7a1ce88b0" />
-#### 教师端主界面
+教师端主界面
 <img width="1202" height="832" alt="教师端主界面" src="https://github.com/user-attachments/assets/47b34eaf-7f83-47e0-9874-9cf0160aa444" />
-#### 违规应用检测
+违规应用检测
 <img width="1202" height="832" alt="违规应用检测" src="https://github.com/user-attachments/assets/073d64bf-a9e8-4686-990d-3cb0a65d222f" />
-#### 教师端查看学生端实时屏幕截图
+教师端查看学生端实时屏幕截图
 <img width="1304" height="832" alt="截取屏幕" src="https://github.com/user-attachments/assets/db7e884b-24d8-4788-9b04-da224d76c861" />
-#### 教师端查看学生端实时摄像头影像
+教师端查看学生端实时摄像头影像
 <img width="1920" height="1080" alt="实时摄像头" src="https://github.com/user-attachments/assets/31653b98-6871-48c1-af48-95e85bf36b1d" />
 
 
@@ -50,7 +50,7 @@
     - `QTcpServer` / `QTcpSocket`: 用于文件传输、监控数据上报、实时屏幕/视频流传输。
 - **数据库**: SQLite (`QSqlDatabase`)
 - **多媒体**: `QCamera`, `QVideoProbe` (摄像头采集), `QScreen` (屏幕截图)
-- **构建工具**: CMake / qmake
+- **构建工具**: qmake
 
 ---
 
@@ -81,7 +81,7 @@ TeachMonitor/
 
 ### 1. 环境要求
 - **操作系统**: Windows 10/11 (目前黑名单检测和摄像头功能主要针对 Windows API优化)
-- **编译器**: MSVC 2019/2022 或 MinGW 64-bit
+- **编译器**: MinGW 64-bit
 - **Qt 版本**: Qt 5.15.2 或更高版本 (需包含 `QtNetwork`, `QtSql`, `QtMultimedia` 模块)
 
 ### 2. 编译与运行
