@@ -146,5 +146,5 @@ TeachMonitor/
 
 ## 👥 贡献者
 
-- **Developer**: XUPT Student 
+- **Developer**: 稍纵即逝 
 - **Tech Stack**: Qt, C++, SQLite
